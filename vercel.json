@@ -2,8 +2,7 @@
   "functions": {
     "api/scan.js": {
       "maxDuration": 30,
-      "memory": 1024,
-      "regions": ["fra1", "iad1"]
+      "memory": 1024
     }
   },
   "rewrites": [
@@ -35,8 +34,5 @@
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
       ]
     }
-  ],
-  "env": {
-    "GROQ_API_KEY": "@groq_api_key"
-  }
+  ]
 }
