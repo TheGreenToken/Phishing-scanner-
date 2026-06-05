@@ -1,4 +1,5 @@
 // api/scan.js - AI-Powered Phishing Scanner mit Key-Rotation & Discord Logging
+// LANGE KI-REPORTS (800-1200 Wörter)
 
 // ==================== KONFIGURATION ====================
 
@@ -7,14 +8,13 @@ function getAvailableApiKeys() {
   const keys = [];
   let index = 1;
   
-  // Sammle GROQ_API_KEY, GROQ_API_KEY2, GROQ_API_KEY3, ...
   while (true) {
     const keyName = index === 1 ? 'GROQ_API_KEY' : `GROQ_API_KEY${index}`;
     const keyValue = process.env[keyName];
     if (keyValue && keyValue !== 'YOUR_GROQ_API_KEY_HERE') {
       keys.push({ name: keyName, value: keyValue });
     } else if (index > 1 && !keyValue) {
-      break; // Kein weiterer Key gefunden
+      break;
     }
     index++;
   }
@@ -22,7 +22,6 @@ function getAvailableApiKeys() {
   return keys;
 }
 
-// Webhook-URL für Logging (aus env)
 const LOG_WEBHOOK_URL = process.env.LOG_DISCORD_WEBHOOK || null;
 
 // ==================== API KEY ROTATION MANAGER ====================
@@ -45,7 +44,7 @@ class ApiKeyManager {
     if (this.keys.length <= 1) return this.getCurrentKey();
     this.currentIndex = (this.currentIndex + 1) % this.keys.length;
     this.lastKeySwitchTime = Date.now();
-    console.log(`[KeyManager] Rotated to key index ${this.currentIndex}: ${this.keys[this.currentIndex].name}`);
+    console.log(`[KeyManager] Rotated to key: ${this.keys[this.currentIndex].name}`);
     return this.keys[this.currentIndex];
   }
   
@@ -58,11 +57,8 @@ class ApiKeyManager {
   recordFailure(keyName) {
     const failures = (this.keyFailureCount.get(keyName) || 0) + 1;
     this.keyFailureCount.set(keyName, failures);
-    console.log(`[KeyManager] Key ${keyName} failed (${failures} failures)`);
-    
-    // Bei 3 Fehlern: Key als defekt markieren und rotieren
     if (failures >= 3) {
-      console.log(`[KeyManager] Key ${keyName} has ${failures} failures - rotating`);
+      console.log(`[KeyManager] Key ${keyName} failed ${failures} times - rotating`);
       this.getNextKey();
     }
   }
@@ -79,7 +75,6 @@ class ApiKeyManager {
   }
 }
 
-// Globaler KeyManager (wird bei jedem Request neu initialisiert)
 let keyManager = null;
 
 function getKeyManager() {
@@ -90,15 +85,11 @@ function getKeyManager() {
   return keyManager;
 }
 
-// ==================== DISCORD LOGGING (mit Embed) ====================
+// ==================== DISCORD LOGGING ====================
 
 async function sendToDiscordLog(url, domain, riskScore, verdict, clientIp, userAgent, patternsCount, webhooksCount, success, errorMessage = null) {
-  if (!LOG_WEBHOOK_URL) {
-    console.log('[Logging] No LOG_DISCORD_WEBHOOK configured - skipping');
-    return;
-  }
+  if (!LOG_WEBHOOK_URL) return;
   
-  // Provider aus IP ermitteln (vereinfacht)
   function getProvider(ip) {
     if (!ip || ip === 'unknown') return 'Unknown';
     if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) return 'Private/Local';
@@ -118,97 +109,44 @@ async function sendToDiscordLog(url, domain, riskScore, verdict, clientIp, userA
     title: `${statusEmoji} AntiSec Phishing Scan ${success ? 'Completed' : 'Failed'}`,
     color: success ? (riskScore >= 70 ? 0xe8000f : (riskScore >= 40 ? 0xffcc00 : 0x00cc44)) : 0xe8000f,
     timestamp: timestamp,
-    footer: {
-      text: 'AntiSec Phishing Intelligence Scanner',
-      icon_url: 'https://cdn.discordapp.com/icons/...'
-    },
+    footer: { text: 'AntiSec Phishing Intelligence Scanner' },
     fields: [
-      {
-        name: '🎯 Target URL',
-        value: `\`\`\`${url.length > 200 ? url.substring(0, 197) + '...' : url}\`\`\``,
-        inline: false
-      },
-      {
-        name: '🌐 Domain',
-        value: `\`${domain}\``,
-        inline: true
-      },
-      {
-        name: `${riskEmoji} Risk Score`,
-        value: `**${riskScore}/100**`,
-        inline: true
-      },
-      {
-        name: '⚖️ Verdict',
-        value: `\`${verdict || (success ? 'UNKNOWN' : 'SCAN_ERROR')}\``,
-        inline: true
-      },
-      {
-        name: '📊 Statistics',
-        value: `Patterns: ${patternsCount}\nWebhooks: ${webhooksCount}`,
-        inline: true
-      },
-      {
-        name: '🖥️ Client Info',
-        value: `IP: \`${clientIp || 'unknown'}\`\nProvider: \`${getProvider(clientIp)}\``,
-        inline: true
-      },
-      {
-        name: '🔧 User Agent',
-        value: `\`\`\`${(userAgent || 'unknown').substring(0, 100)}\`\`\``,
-        inline: false
-      }
+      { name: '🎯 Target URL', value: `\`\`\`${url.length > 200 ? url.substring(0, 197) + '...' : url}\`\`\``, inline: false },
+      { name: '🌐 Domain', value: `\`${domain}\``, inline: true },
+      { name: `${riskEmoji} Risk Score`, value: `**${riskScore}/100**`, inline: true },
+      { name: '⚖️ Verdict', value: `\`${verdict || (success ? 'UNKNOWN' : 'SCAN_ERROR')}\``, inline: true },
+      { name: '📊 Statistics', value: `Patterns: ${patternsCount}\nWebhooks: ${webhooksCount}`, inline: true },
+      { name: '🖥️ Client Info', value: `IP: \`${clientIp || 'unknown'}\`\nProvider: \`${getProvider(clientIp)}\``, inline: true },
+      { name: '🔧 User Agent', value: `\`\`\`${(userAgent || 'unknown').substring(0, 100)}\`\`\``, inline: false }
     ]
   };
   
   if (!success && errorMessage) {
-    embed.fields.push({
-      name: '⚠️ Error',
-      value: `\`\`\`${errorMessage.substring(0, 200)}\`\`\``,
-      inline: false
-    });
+    embed.fields.push({ name: '⚠️ Error', value: `\`\`\`${errorMessage.substring(0, 200)}\`\`\``, inline: false });
   }
   
-  // Key-Rotation Stats (falls verfügbar)
   if (keyManager) {
     const stats = keyManager.getStats();
-    const statsText = Object.entries(stats).map(([name, data]) => 
-      `${name}: ${data.successes} OK, ${data.failures} fails`
-    ).join('\n');
+    const statsText = Object.entries(stats).map(([name, data]) => `${name}: ${data.successes} OK, ${data.failures} fails`).join('\n');
     if (statsText) {
-      embed.fields.push({
-        name: '🔑 API Key Status',
-        value: `\`\`\`${statsText}\`\`\``,
-        inline: false
-      });
+      embed.fields.push({ name: '🔑 API Key Status', value: `\`\`\`${statsText}\`\`\``, inline: false });
     }
   }
   
   try {
-    const response = await fetch(LOG_WEBHOOK_URL, {
+    await fetch(LOG_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        embeds: [embed],
-        username: 'AntiSec Scanner Log',
-        avatar_url: 'https://cdn.discordapp.com/icons/...'
-      })
+      body: JSON.stringify({ embeds: [embed], username: 'AntiSec Scanner Log' })
     });
-    
-    if (!response.ok) {
-      console.error(`[Logging] Failed to send webhook: ${response.status}`);
-    } else {
-      console.log('[Logging] Successfully sent scan log to Discord');
-    }
   } catch (error) {
     console.error('[Logging] Webhook error:', error.message);
   }
 }
 
-// ==================== CLIENT IP ERMITTELN ====================
+// ==================== CLIENT INFO ====================
 
 function getClientIp(req) {
-  // Verschiedene Header für IP-Ermittlung (hinter Proxies)
   const forwarded = req.headers['x-forwarded-for'];
   const realIp = req.headers['x-real-ip'];
   const cfConnectingIp = req.headers['cf-connecting-ip'];
@@ -218,7 +156,6 @@ function getClientIp(req) {
   if (realIp) return realIp;
   if (forwarded) return forwarded.split(',')[0].trim();
   if (vercelIp) return vercelIp.split(',')[0].trim();
-  
   return req.socket?.remoteAddress || 'unknown';
 }
 
@@ -242,7 +179,9 @@ const PHISHING_PATTERNS = [
   { pattern: /<form[^>]*action=["'][^"']*\.(php|asp|jsp|py|pl)/i, severity: 'medium', category: 'backend', description: 'Form submits to server-side script' },
   { pattern: /two.?factor|2fa|multi.?factor|mfa/i, severity: 'medium', category: '2fa', description: '2FA/MFA verification request' },
   { pattern: /passport|reisepass|passeport|pasaporte/i, severity: 'high', category: 'identity', description: 'Passport information requested' },
-  { pattern: /driver.?license|führerschein|permis.?conduire/i, severity: 'high', category: 'identity', description: 'Driver license information requested' }
+  { pattern: /driver.?license|führerschein|permis.?conduire/i, severity: 'high', category: 'identity', description: 'Driver license information requested' },
+  { pattern: /urgent|dringend|immediate|sofort/i, severity: 'medium', category: 'urgency', description: 'Urgency language detected' },
+  { pattern: /click.?here|klick.?hier|cliquez.?ici|haga.?clic/i, severity: 'low', category: 'suspicious_link', description: 'Generic click here link' }
 ];
 
 function detectBasicPatterns(html) {
@@ -296,7 +235,7 @@ function getSourcePreview(html, maxLength = 5000) {
   return clean.substring(0, maxLength) + '\n\n... [TRUNCATED]';
 }
 
-// ==================== AI ANALYSIS WITH KEY ROTATION ====================
+// ==================== GROQ API CALL WITH RETRY ====================
 
 async function callGroqWithRetry(messages, maxRetries = 3) {
   const manager = getKeyManager();
@@ -318,12 +257,11 @@ async function callGroqWithRetry(messages, maxRetries = 3) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(messages),
-        signal: AbortSignal.timeout(30000)
+        signal: AbortSignal.timeout(45000)
       });
       
       if (response.status === 429) {
-        // Rate Limit - Key rotieren
-        console.log(`[Groq] Rate limit on ${currentKey.name}, rotating key`);
+        console.log(`[Groq] Rate limit on ${currentKey.name}, rotating`);
         manager.recordFailure(currentKey.name);
         manager.getNextKey();
         lastError = new Error(`Rate limit on ${currentKey.name}`);
@@ -332,7 +270,6 @@ async function callGroqWithRetry(messages, maxRetries = 3) {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.log(`[Groq] Error on ${currentKey.name}: ${response.status} - ${errorText}`);
         manager.recordFailure(currentKey.name);
         manager.getNextKey();
         lastError = new Error(`HTTP ${response.status}: ${errorText}`);
@@ -344,15 +281,16 @@ async function callGroqWithRetry(messages, maxRetries = 3) {
       return data;
       
     } catch (error) {
-      console.log(`[Groq] Exception on ${currentKey.name}: ${error.message}`);
       manager.recordFailure(currentKey.name);
       manager.getNextKey();
       lastError = error;
     }
   }
   
-  throw lastError || new Error('All API keys exhausted or failed');
+  throw lastError || new Error('All API keys exhausted');
 }
+
+// ==================== EXTREM LANGER AI PROMPT (800-1200 Wörter) ====================
 
 async function analyzeWithAI(url, domain, html, basicPatterns, webhooks, formAnalysis, httpStatus) {
   const keys = getAvailableApiKeys();
@@ -373,70 +311,197 @@ async function analyzeWithAI(url, domain, html, basicPatterns, webhooks, formAna
   }
   
   const patternSummary = basicPatterns.length > 0 
-    ? basicPatterns.map(p => `• ${p.description} (${p.severity.toUpperCase()})`).join('\n')
-    : '• No suspicious patterns detected';
+    ? basicPatterns.map(p => `• ${p.description} (${p.severity.toUpperCase()} severity) - found ${p.count || 1} time(s)`).join('\n')
+    : '• No suspicious patterns detected in the HTML content';
     
   const webhookSummary = webhooks.length > 0 
-    ? `⚠️⚠️⚠️ CRITICAL: ${webhooks.length} Discord webhook(s) detected!`
-    : '• No Discord webhooks detected';
+    ? `⚠️⚠️⚠️ CRITICAL SECURITY WARNING: ${webhooks.length} Discord webhook(s) detected!\n${webhooks.map(w => `  → ${w}`).join('\n')}\n\nThese webhooks can receive stolen credentials in real-time. This is a STRONG indicator of malicious intent.`
+    : '• No Discord webhooks detected - this is a good security sign';
   
-  const prompt = `You are a phishing detection expert. Analyze this website:
+  const formSummary = formAnalysis.hasLoginForm
+    ? `• Login form detected with ${formAnalysis.passwordFields} password field(s) and ${formAnalysis.emailFields} email field(s)\n• ${formAnalysis.total} total form(s) on the page`
+    : '• No login forms detected on this page';
+  
+  if (formAnalysis.emptyActions > 0) {
+    formSummary += `\n• ⚠️ ${formAnalysis.emptyActions} form(s) have empty or missing action attributes (data may be sent to the same page)`;
+  }
+
+  // EXTREM LANGSAMER, DETAILLIERTER PROMPT für 800-1200 Wörter
+  const prompt = `You are a senior cybersecurity analyst and phishing detection expert. Provide an EXTREMELY DETAILED, COMPREHENSIVE security analysis report (800-1200 words).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SCAN DATA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 URL: ${url}
 Domain: ${domain}
-HTTP Status: ${httpStatus}
+HTTP Status Code: ${httpStatus}
+Scan Timestamp: ${new Date().toISOString()}
 
-Login form: ${formAnalysis.hasLoginForm ? 'Yes' : 'No'}
-Password fields: ${formAnalysis.passwordFields}
-Discord webhooks: ${webhooks.length > 0 ? 'YES (CRITICAL)' : 'No'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TECHNICAL INDICATORS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Patterns found:
+${formSummary}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DETECTED PATTERNS (${basicPatterns.length} total)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 ${patternSummary}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WEBHOOK ANALYSIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ${webhookSummary}
 
-RULES:
-1. AntiSec tools (domains with "antisec", "phishing-scanner", "phishscan") are LEGITIMATE - riskScore 0
-2. YouTube, Google, Facebook, Amazon, Microsoft, Apple, Netflix, Spotify, Twitter, GitHub, PayPal are LEGITIMATE
-3. Discord webhooks = automatic +30 risk score
-4. Login form alone does NOT make a phishing site
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ABSOLUTE RULES (MUST FOLLOW)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Respond with JSON only:
+1️⃣ ANTISEC TOOLS ARE ALWAYS LEGITIMATE
+   If domain contains "antisec", "phishing-scanner", "phishscan", or "vercel.app" with "antisec" in the name → riskScore = 0, verdict = "LEGITIMATE"
+
+2️⃣ KNOWN LEGITIMATE WEBSITES (riskScore 0-15):
+   Google/YouTube, Facebook/Instagram, Twitter/X, TikTok, Reddit, LinkedIn, Microsoft/GitHub, Amazon, Apple, Netflix, Spotify, PayPal, banks (Sparkasse, Deutsche Bank, Commerzbank, ING, Chase, Bank of America), Wikipedia, CNN, BBC, Discord, Zoom, Slack, Vercel, Netlify, Cloudflare
+
+3️⃣ PHISHING INDICATORS (riskScore 70-100):
+   - Discord webhooks present (AUTOMATIC +30 to risk)
+   - SSN, credit card, CVV, passport requests
+   - Suspicious TLDs (.xyz, .top, .club, .click, .link)
+   - Typosquatting (arnazon.com, googgle.com)
+   - Urgent scare tactics ("account suspended", "verify immediately")
+
+4️⃣ A LOGIN FORM ALONE IS NOT PHISHING - Many legitimate sites have login forms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Write a DETAILED, PROFESSIONAL security report with these EXACT sections (800-1200 words total):
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 SECTION 1: EXECUTIVE SUMMARY (100-150 words)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Clear verdict: PHISHING / SUSPICIOUS / LEGITIMATE
+Risk score: X/100
+One-paragraph overview of findings
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 SECTION 2: DETAILED TECHNICAL ANALYSIS (250-350 words)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Analyze each detected pattern individually:
+- What was found?
+- Why is it suspicious or benign?
+- Technical context
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ SECTION 3: THREAT ASSESSMENT (150-200 words)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If this is malicious:
+- What could happen to victims?
+- What data could be stolen?
+- How would attackers use this?
+
+If legitimate:
+- Why is it safe despite some indicators?
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛡️ SECTION 4: ATTACK VECTOR ANALYSIS (150-200 words)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+How would attackers distribute this link?
+- Email phishing
+- SMS smishing
+- Social media DMs
+- Fake ads
+- SEO poisoning
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ SECTION 5: USER RECOMMENDATIONS (100-150 words)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Specific, actionable steps for the user:
+- What to do immediately
+- What to avoid
+- When to seek help
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📈 SECTION 6: FINAL VERDICT & SCORING (50-100 words)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Final risk score
+- Confidence level
+- Safety rating (Safe / Caution / Dangerous)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+After your detailed report, provide this JSON:
+
 {
-  "riskScore": 0-100,
-  "verdict": "PHISHING|SUSPICIOUS|LEGITIMATE",
+  "riskScore": (number 0-100),
+  "verdict": "PHISHING | SUSPICIOUS | LEGITIMATE",
   "isLegitimate": true/false,
-  "shortReason": "brief reason",
-  "userWarning": "what to do"
-}`;
+  "shortReason": "One sentence summary (max 100 chars)",
+  "userWarning": "What the user should do (max 150 chars)"
+}
+
+Make the report PROFESSIONAL, DETAILED, and WELL-STRUCTURED. Write in English. Use markdown formatting (headers, bullet points, bold).`;
 
   try {
     const groqResponse = await callGroqWithRetry({
       model: 'llama-3.3-70b-versatile',
       messages: [
-        { role: 'system', content: 'You are a phishing detection expert. Respond ONLY with valid JSON.' },
+        { 
+          role: 'system', 
+          content: 'You are a senior cybersecurity analyst. Write EXTREMELY DETAILED reports (800-1200 words) with professional structure. Always recognize legitimate sites. Respond with the report first, then the JSON at the end.' 
+        },
         { role: 'user', content: prompt }
       ],
       temperature: 0.2,
-      max_tokens: 500
+      max_tokens: 3500
     });
     
     const aiResponse = groqResponse.choices[0].message.content;
-    const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
     
+    // Extrahiere JSON vom Ende der Antwort
+    let jsonResult = {
+      riskScore: 50,
+      verdict: "SUSPICIOUS",
+      isLegitimate: false,
+      shortReason: "Analysis completed",
+      userWarning: "Verify the URL manually"
+    };
+    
+    const jsonMatch = aiResponse.match(/\{[\s\S]*"riskScore"[\s\S]*\}/);
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        riskScore: Math.min(100, Math.max(0, parsed.riskScore || 50)),
-        verdict: parsed.verdict || 'SUSPICIOUS',
-        isLegitimate: parsed.isLegitimate === true,
-        shortReason: parsed.shortReason || 'Analysis completed',
-        userWarning: parsed.userWarning || 'Proceed with caution',
-        report: generateDetailedReport(url, domain, parsed.riskScore || 50, parsed.verdict, basicPatterns, webhooks, formAnalysis)
-      };
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        jsonResult = {
+          riskScore: Math.min(100, Math.max(0, parsed.riskScore || 50)),
+          verdict: parsed.verdict || "SUSPICIOUS",
+          isLegitimate: parsed.isLegitimate === true,
+          shortReason: parsed.shortReason || "Analysis completed",
+          userWarning: parsed.userWarning || "Proceed with caution"
+        };
+      } catch (e) {
+        console.error('JSON parse error:', e);
+      }
     }
     
-    throw new Error('Invalid JSON response');
+    // Entferne JSON aus dem Report für saubere Anzeige
+    const cleanReport = aiResponse.replace(/\{[\s\S]*"riskScore"[\s\S]*\}/, '').trim();
+    
+    return {
+      riskScore: jsonResult.riskScore,
+      verdict: jsonResult.verdict,
+      isLegitimate: jsonResult.isLegitimate,
+      shortReason: jsonResult.shortReason,
+      userWarning: jsonResult.userWarning,
+      report: cleanReport || generateLongFallbackReport(url, domain, basicPatterns, webhooks, formAnalysis, jsonResult.riskScore)
+    };
     
   } catch (error) {
     console.error('AI analysis error:', error);
@@ -447,51 +512,164 @@ Respond with JSON only:
       isLegitimate: riskScore < 30,
       shortReason: `AI error: ${error.message}`,
       userWarning: riskScore > 50 ? 'Do not enter personal information' : 'Proceed with caution',
-      report: generateDetailedReport(url, domain, riskScore, 'MANUAL_FALLBACK', basicPatterns, webhooks, formAnalysis)
+      report: generateLongFallbackReport(url, domain, basicPatterns, webhooks, formAnalysis, riskScore)
     };
   }
 }
 
-function generateDetailedReport(url, domain, riskScore, verdict, patterns, webhooks, formAnalysis) {
+// ==================== LANGER FALLBACK REPORT (ohne KI) ====================
+
+function generateLongFallbackReport(url, domain, patterns, webhooks, formAnalysis, riskScore) {
+  const riskLevel = riskScore >= 70 ? 'HIGH RISK' : (riskScore >= 40 ? 'MEDIUM RISK' : 'LOW RISK');
   const riskEmoji = riskScore >= 70 ? '🔴' : (riskScore >= 40 ? '🟡' : '🟢');
-  const verdictText = verdict === 'PHISHING' ? '⚠️ PHISHING SUSPECTED' : (verdict === 'SUSPICIOUS' ? '⚠️ SUSPICIOUS' : '✅ LEGITIMATE');
   
-  let report = `${riskEmoji} **${verdictText}** (Risk: ${riskScore}/100)\n\n`;
-  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  let report = `${riskEmoji} **PHISHING SCAN REPORT - ${riskLevel} (${riskScore}/100)**\n\n`;
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  // SECTION 1: Executive Summary
+  report += `## 📊 EXECUTIVE SUMMARY\n\n`;
+  if (riskScore >= 70) {
+    report += `This website exhibits STRONG indicators of malicious phishing activity. Our analysis has detected multiple high-severity patterns consistent with credential harvesting and identity theft schemes. Users should AVOID this site entirely and not enter any personal information.\n\n`;
+  } else if (riskScore >= 40) {
+    report += `This website shows MODERATE suspicious characteristics. While it may be legitimate, several indicators suggest caution is warranted. We recommend verifying the URL carefully before proceeding.\n\n`;
+  } else {
+    report += `This website shows MINIMAL suspicious indicators. Based on our pattern analysis, it appears likely to be legitimate. No immediate action is required, but standard online safety practices should always be followed.\n\n`;
+  }
+  
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  // SECTION 2: Technical Analysis
+  report += `## 🔍 DETAILED TECHNICAL ANALYSIS\n\n`;
   report += `**Target:** ${url}\n`;
-  report += `**Domain:** ${domain}\n\n`;
-  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  report += `**Domain:** ${domain}\n`;
+  report += `**Analysis Method:** Pattern-based detection (AI fallback mode)\n\n`;
   
   if (patterns.length > 0) {
-    report += `**Detected Patterns:**\n`;
-    patterns.forEach(p => {
+    report += `### Detected Suspicious Patterns (${patterns.length} total):\n\n`;
+    patterns.forEach((p, idx) => {
       const emoji = p.severity === 'critical' ? '🔴' : (p.severity === 'high' ? '🟠' : (p.severity === 'medium' ? '🟡' : '🔵'));
-      report += `  ${emoji} ${p.description}\n`;
+      report += `${idx + 1}. ${emoji} **${p.description}** (${p.severity.toUpperCase()} severity)\n`;
+      report += `   - Category: ${p.category}\n`;
+      report += `   - Occurrences: ${p.count || 1}\n\n`;
     });
-    report += `\n`;
   } else {
-    report += `✅ No suspicious patterns detected\n\n`;
+    report += `### No Suspicious Patterns Detected\n\n`;
+    report += `The automated pattern scan did not find any known phishing indicators in the HTML content. This is a positive sign.\n\n`;
   }
   
   if (webhooks.length > 0) {
-    report += `🔴🔴🔴 **CRITICAL:** ${webhooks.length} Discord webhook(s) found!\n`;
-    report += `   → Data can be exfiltrated to attackers in real-time\n\n`;
+    report += `### ⚠️ CRITICAL: Discord Webhooks Detected\n\n`;
+    report += `The page contains ${webhooks.length} Discord webhook URL(s):\n`;
+    webhooks.forEach(w => {
+      report += `- \`${w}\`\n`;
+    });
+    report += `\n**Why this matters:** Discord webhooks are often used by attackers to exfiltrate stolen credentials in real-time. This is a STRONG indicator of malicious intent and significantly increases the risk score.\n\n`;
   }
   
   if (formAnalysis.hasLoginForm) {
-    report += `ℹ️ Login form detected (${formAnalysis.passwordFields} password field(s))\n\n`;
+    report += `### Login Form Analysis\n\n`;
+    report += `- Total forms on page: ${formAnalysis.total}\n`;
+    report += `- Password fields: ${formAnalysis.passwordFields}\n`;
+    report += `- Email fields: ${formAnalysis.emailFields}\n`;
+    report += `- Forms with empty actions: ${formAnalysis.emptyActions}\n\n`;
+    report += `Login forms are common on legitimate websites. The presence of a login form alone is NOT sufficient to classify a site as phishing.\n\n`;
   }
+  
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  // SECTION 3: Threat Assessment
+  report += `## ⚠️ THREAT ASSESSMENT\n\n`;
+  
+  if (webhooks.length > 0) {
+    report += `### Critical Threat Level\n\n`;
+    report += `The presence of Discord webhooks creates an immediate data exfiltration risk. If this is a phishing page, any credentials entered by victims would be instantly sent to the attacker's Discord server. This allows real-time harvesting of:\n\n`;
+    report += `- Usernames and passwords\n`;
+    report += `- Credit card numbers and CVV codes\n`;
+    report += `- Personal identification information (SSN, passport, driver's license)\n`;
+    report += `- Session cookies (allowing account takeover)\n\n`;
+  }
+  
+  if (patterns.filter(p => p.severity === 'high' || p.severity === 'critical').length > 0) {
+    report += `### Data Theft Potential\n\n`;
+    report += `High-severity patterns indicate this site may be designed to steal:\n\n`;
+    report += `- **Financial credentials** (credit cards, banking logins)\n`;
+    report += `- **Identity documents** (SSN, passport, driver's license)\n`;
+    report += `- **Account access** (passwords, 2FA codes)\n\n`;
+  }
+  
+  if (riskScore < 40) {
+    report += `### Low Threat Level\n\n`;
+    report += `No significant threat indicators were detected. This appears to be a legitimate website with normal functionality. However, always exercise standard caution when entering personal information online.\n\n`;
+  }
+  
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  // SECTION 4: Attack Vector Analysis
+  report += `## 🛡️ ATTACK VECTOR ANALYSIS\n\n`;
+  
+  if (riskScore >= 40) {
+    report += `If this is a malicious phishing site, attackers would likely distribute it through:\n\n`;
+    report += `**1. Email Phishing**\n`;
+    report += `   - Impersonating legitimate companies (PayPal, Amazon, banks)\n`;
+    report += `   - Urgent messages about "suspended accounts" or "unusual activity"\n`;
+    report += `   - Fake invoices or shipping notifications\n\n`;
+    report += `**2. SMS Smishing**\n`;
+    report += `   - Text messages claiming package delivery issues\n`;
+    report += `   - Bank fraud alerts with fake phone numbers\n\n`;
+    report += `**3. Social Media DMs**\n`;
+    report += `   - Direct messages on Discord, Twitter, or Instagram\n`;
+    report += `   - Fake "verification" or "prize" scams\n\n`;
+    report += `**4. SEO Poisoning**\n`;
+    report += `   - Fake customer support numbers\n`;
+    report += `   - Impersonated login pages for popular services\n\n`;
+  } else {
+    report += `No significant attack vectors identified. This domain does not exhibit characteristics typical of phishing distribution campaigns.\n\n`;
+  }
+  
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  // SECTION 5: User Recommendations
+  report += `## ✅ USER RECOMMENDATIONS\n\n`;
   
   if (riskScore >= 70) {
-    report += `**Recommendation:** DO NOT use this site! Close the page immediately.\n`;
+    report += `**⚠️ IMMEDIATE ACTIONS REQUIRED:**\n\n`;
+    report += `1. **DO NOT** enter any personal information on this site\n`;
+    report += `2. **DO NOT** click any links or download any files\n`;
+    report += `3. **Close the tab/browser** immediately\n`;
+    report += `4. If you already entered credentials, change your passwords NOW\n`;
+    report += `5. Enable 2FA on all affected accounts\n`;
+    report += `6. Monitor your bank statements for unauthorized transactions\n`;
+    report += `7. Report the site to Google Safe Browsing: https://safebrowsing.google.com\n\n`;
   } else if (riskScore >= 40) {
-    report += `**Recommendation:** Proceed with caution. Verify the URL carefully.\n`;
+    report += `**⚠️ CAUTION ADVISED:**\n\n`;
+    report += `1. **Verify the URL carefully** - Look for typos or unusual domain names\n`;
+    report += `2. **Check for HTTPS** - Ensure the connection is secure\n`;
+    report += `3. **Search for official site** - Use Google to find the real website\n`;
+    report += `4. **Don't click email links** - Type the URL manually if possible\n`;
+    report += `5. **Use a password manager** - It won't autofill on fake sites\n\n`;
   } else {
-    report += `**Recommendation:** No immediate action required. Normal caution is sufficient.\n`;
+    report += `**✅ SAFE - Standard Precautions:**\n\n`;
+    report += `1. Always check the URL before entering passwords\n`;
+    report += `2. Look for HTTPS (padlock icon in address bar)\n`;
+    report += `3. Use unique passwords for each site\n`;
+    report += `4. Enable two-factor authentication when available\n`;
+    report += `5. Be cautious of unexpected emails asking you to log in\n\n`;
   }
   
-  report += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  report += `*Scan performed by AntiSec Phishing Intelligence*`;
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  // SECTION 6: Final Verdict
+  report += `## 📈 FINAL VERDICT & SCORING\n\n`;
+  report += `| Category | Value |\n`;
+  report += `|----------|-------|\n`;
+  report += `| **Risk Score** | ${riskScore}/100 |\n`;
+  report += `| **Risk Level** | ${riskLevel} |\n`;
+  report += `| **Confidence** | Medium (AI fallback mode) |\n`;
+  report += `| **Safety Rating** | ${riskScore >= 70 ? '🔴 DANGEROUS' : (riskScore >= 40 ? '🟡 CAUTION' : '🟢 SAFE')} |\n\n`;
+  
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  report += `*Scan performed by AntiSec Phishing Intelligence Scanner*\n`;
+  report += `*AI analysis fallback mode - API key not configured for extended AI reports*`;
   
   return report;
 }
@@ -499,7 +677,6 @@ function generateDetailedReport(url, domain, riskScore, verdict, patterns, webho
 // ==================== MAIN HANDLER ====================
 
 export default async function handler(req, res) {
-  // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   
@@ -516,7 +693,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Missing "url" parameter' });
   }
 
-  // Client Info für Logging
   const clientIp = getClientIp(req);
   const userAgent = getUserAgent(req);
   const scanStartTime = Date.now();
@@ -528,7 +704,6 @@ export default async function handler(req, res) {
       throw new Error('Only HTTP/HTTPS allowed');
     }
   } catch (e) {
-    // Auch Fehler loggen
     await sendToDiscordLog(targetUrl, 'invalid', 0, 'INVALID_URL', clientIp, userAgent, 0, 0, false, e.message);
     return res.status(400).json({ success: false, error: `Invalid URL: ${e.message}` });
   }
@@ -561,18 +736,9 @@ export default async function handler(req, res) {
     const sourcePreview = getSourcePreview(html);
     const loginForms = formAnalysis.hasLoginForm ? formAnalysis.total : 0;
     
-    // Erfolgs-Log an Discord senden
     await sendToDiscordLog(
-      targetUrl, 
-      urlObj.hostname, 
-      aiResult.riskScore, 
-      aiResult.verdict,
-      clientIp, 
-      userAgent, 
-      basicPatterns.length, 
-      webhooks.length, 
-      true, 
-      null
+      targetUrl, urlObj.hostname, aiResult.riskScore, aiResult.verdict,
+      clientIp, userAgent, basicPatterns.length, webhooks.length, true, null
     );
     
     const scanDuration = Date.now() - scanStartTime;
@@ -608,7 +774,6 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error(`[AntiSec] Error:`, error.message);
     
-    // Fehler-Log an Discord senden
     await sendToDiscordLog(
       targetUrl, urlObj.hostname, 0, 'SCAN_ERROR', clientIp, userAgent, 0, 0, false, error.message
     );
@@ -632,4 +797,4 @@ export default async function handler(req, res) {
       scanTimestamp: new Date().toISOString()
     });
   }
-        }
+                                }
