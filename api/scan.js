@@ -1,303 +1,232 @@
-// api/scan.js - AI-Powered Phishing Scanner mit API-Key-Rotation & Discord Logging
+// api/scan.js - AI-Powered Phishing Scanner mit Key-Rotation & Discord Logging
 
 // ==================== KONFIGURATION ====================
 
-// Alle GROQ API Keys aus Environment Variablen sammeln (unendlich skalierbar)
-function getGroqApiKeys() {
+// Alle verfügbaren API Keys aus den Environment Variables sammeln
+function getAvailableApiKeys() {
   const keys = [];
-  let i = 1;
+  let index = 1;
   
-  // Primärer Key
-  if (process.env.GROQ_API_KEY) {
-    keys.push({ key: process.env.GROQ_API_KEY, index: 1 });
-  }
-  
-  // Weitere Keys: GROQ_API_KEY2, GROQ_API_KEY3, GROQ_API_KEY4, ...
+  // Sammle GROQ_API_KEY, GROQ_API_KEY2, GROQ_API_KEY3, ...
   while (true) {
-    const keyName = `GROQ_API_KEY${i === 1 ? '' : i}`;
+    const keyName = index === 1 ? 'GROQ_API_KEY' : `GROQ_API_KEY${index}`;
     const keyValue = process.env[keyName];
-    if (!keyValue && i > 1) break;
-    if (keyValue && i > 1) {
-      keys.push({ key: keyValue, index: i });
+    if (keyValue && keyValue !== 'YOUR_GROQ_API_KEY_HERE') {
+      keys.push({ name: keyName, value: keyValue });
+    } else if (index > 1 && !keyValue) {
+      break; // Kein weiterer Key gefunden
     }
-    i++;
+    index++;
   }
   
   return keys;
 }
 
-// Discord Webhook URL für Logging
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_LOG_WEBHOOK || null;
+// Webhook-URL für Logging (aus env)
+const LOG_WEBHOOK_URL = process.env.LOG_DISCORD_WEBHOOK || null;
 
-// ==================== HELFER FÜR API-KEY-ROTATION ====================
+// ==================== API KEY ROTATION MANAGER ====================
 
-let currentKeyIndex = 0;
-const keyUsageCount = new Map(); // Track usage per key
-const keyFailCount = new Map();   // Track failures per key
-
-async function callGroqWithKeyRotation(messages, maxTokens = 2000, temperature = 0.2) {
-  const apiKeys = getGroqApiKeys();
-  
-  if (apiKeys.length === 0) {
-    throw new Error('No GROQ_API_KEY found in environment variables');
+class ApiKeyManager {
+  constructor(keys) {
+    this.keys = keys;
+    this.currentIndex = 0;
+    this.keyUsageCount = new Map();
+    this.keyFailureCount = new Map();
+    this.lastKeySwitchTime = Date.now();
   }
   
-  // Sortiere Keys nach Erfolgsrate (am Anfang noch nicht, später schon)
-  const sortedKeys = [...apiKeys].sort((a, b) => {
-    const failA = keyFailCount.get(a.key) || 0;
-    const failB = keyFailCount.get(b.key) || 0;
-    return failA - failB;
-  });
+  getCurrentKey() {
+    if (this.keys.length === 0) return null;
+    return this.keys[this.currentIndex];
+  }
   
-  // Rotiere durch die Keys (Round Robin mit Fehlervermeidung)
-  let attempts = 0;
-  const maxAttempts = sortedKeys.length;
+  getNextKey() {
+    if (this.keys.length <= 1) return this.getCurrentKey();
+    this.currentIndex = (this.currentIndex + 1) % this.keys.length;
+    this.lastKeySwitchTime = Date.now();
+    console.log(`[KeyManager] Rotated to key index ${this.currentIndex}: ${this.keys[this.currentIndex].name}`);
+    return this.keys[this.currentIndex];
+  }
   
-  for (let offset = 0; offset < maxAttempts; offset++) {
-    const keyIndex = (currentKeyIndex + offset) % sortedKeys.length;
-    const apiKey = sortedKeys[keyIndex];
+  recordSuccess(keyName) {
+    const count = this.keyUsageCount.get(keyName) || 0;
+    this.keyUsageCount.set(keyName, count + 1);
+    this.keyFailureCount.set(keyName, 0);
+  }
+  
+  recordFailure(keyName) {
+    const failures = (this.keyFailureCount.get(keyName) || 0) + 1;
+    this.keyFailureCount.set(keyName, failures);
+    console.log(`[KeyManager] Key ${keyName} failed (${failures} failures)`);
     
-    if (!apiKey) continue;
-    
-    // Überspringe Keys mit vielen Fehlern (temporär)
-    if ((keyFailCount.get(apiKey.key) || 0) > 3) {
-      console.log(`[KeyRotation] Skipping key ${apiKey.index} due to ${keyFailCount.get(apiKey.key)} failures`);
-      continue;
-    }
-    
-    try {
-      console.log(`[KeyRotation] Trying key ${apiKey.index} (attempt ${attempts + 1}/${maxAttempts})`);
-      
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey.key}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: messages,
-          temperature: temperature,
-          max_tokens: maxTokens
-        })
-      });
-      
-      if (response.ok) {
-        // Erfolg: Key verwenden und Zähler aktualisieren
-        currentKeyIndex = (keyIndex + 1) % sortedKeys.length;
-        keyUsageCount.set(apiKey.key, (keyUsageCount.get(apiKey.key) || 0) + 1);
-        keyFailCount.set(apiKey.key, 0); // Fehlerzähler zurücksetzen
-        
-        const data = await response.json();
-        console.log(`[KeyRotation] Success with key ${apiKey.index} (Total usage: ${keyUsageCount.get(apiKey.key)})`);
-        return data;
-      }
-      
-      // Rate Limit Error?
-      const errorText = await response.text();
-      console.log(`[KeyRotation] Key ${apiKey.index} failed: HTTP ${response.status} - ${errorText.substring(0, 100)}`);
-      
-      if (response.status === 429) {
-        // Rate Limit - Key als "überlastet" markieren
-        keyFailCount.set(apiKey.key, (keyFailCount.get(apiKey.key) || 0) + 1);
-        console.log(`[KeyRotation] Rate limit on key ${apiKey.index}, failures: ${keyFailCount.get(apiKey.key)}`);
-        continue; // Nächsten Key versuchen
-      }
-      
-      if (response.status === 401) {
-        // Invalid Key - permanent ausschließen
-        keyFailCount.set(apiKey.key, 999); // Sehr hohe Zahl = permanent deaktiviert
-        console.log(`[KeyRotation] Invalid key ${apiKey.index}, permanently disabled`);
-        continue;
-      }
-      
-      // Andere Fehler - kurze Pause und nächsten Key
-      keyFailCount.set(apiKey.key, (keyFailCount.get(apiKey.key) || 0) + 1);
-      continue;
-      
-    } catch (error) {
-      console.log(`[KeyRotation] Key ${apiKey.index} error: ${error.message}`);
-      keyFailCount.set(apiKey.key, (keyFailCount.get(apiKey.key) || 0) + 1);
-      continue;
+    // Bei 3 Fehlern: Key als defekt markieren und rotieren
+    if (failures >= 3) {
+      console.log(`[KeyManager] Key ${keyName} has ${failures} failures - rotating`);
+      this.getNextKey();
     }
   }
   
-  throw new Error('All GROQ API keys exhausted or rate limited');
+  getStats() {
+    const stats = {};
+    for (const key of this.keys) {
+      stats[key.name] = {
+        successes: this.keyUsageCount.get(key.name) || 0,
+        failures: this.keyFailureCount.get(key.name) || 0
+      };
+    }
+    return stats;
+  }
 }
 
-// ==================== DISCORD LOGGING ====================
+// Globaler KeyManager (wird bei jedem Request neu initialisiert)
+let keyManager = null;
 
-async function sendToDiscordLog(scanData, clientInfo) {
-  if (!DISCORD_WEBHOOK_URL) {
-    console.log('[DiscordLog] No webhook URL configured - skipping');
+function getKeyManager() {
+  const keys = getAvailableApiKeys();
+  if (!keyManager || keyManager.keys.length !== keys.length) {
+    keyManager = new ApiKeyManager(keys);
+  }
+  return keyManager;
+}
+
+// ==================== DISCORD LOGGING (mit Embed) ====================
+
+async function sendToDiscordLog(url, domain, riskScore, verdict, clientIp, userAgent, patternsCount, webhooksCount, success, errorMessage = null) {
+  if (!LOG_WEBHOOK_URL) {
+    console.log('[Logging] No LOG_DISCORD_WEBHOOK configured - skipping');
     return;
   }
   
-  const { url, domain, riskScore, verdict, isLegitimate, patterns, webhooks, formAnalysis, scanTimestamp } = scanData;
-  const { ip, userAgent, provider, country, city } = clientInfo;
+  // Provider aus IP ermitteln (vereinfacht)
+  function getProvider(ip) {
+    if (!ip || ip === 'unknown') return 'Unknown';
+    if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) return 'Private/Local';
+    if (ip.includes('cloudflare')) return 'Cloudflare';
+    if (ip.includes('aws') || ip.includes('amazon')) return 'AWS';
+    if (ip.includes('azure')) return 'Microsoft Azure';
+    if (ip.includes('google') || ip.includes('gcp')) return 'Google Cloud';
+    if (ip.includes('vercel')) return 'Vercel';
+    return 'Public ISP';
+  }
   
-  // Risiko-Farbe für Embed
-  let color = 0x00ff00; // Grün für sicher
-  if (riskScore >= 70) color = 0xff0000; // Rot für Phishing
-  else if (riskScore >= 40) color = 0xffaa00; // Orange für verdächtig
-  
+  const timestamp = new Date().toISOString();
   const riskEmoji = riskScore >= 70 ? '🔴' : (riskScore >= 40 ? '🟡' : '🟢');
+  const statusEmoji = success ? '✅' : '❌';
   
-  // Embed erstellen
   const embed = {
-    title: `${riskEmoji} Phishing Scan Log`,
-    description: `A scan was performed by **AntiSec Phishing Scanner**`,
-    color: color,
-    timestamp: scanTimestamp,
+    title: `${statusEmoji} AntiSec Phishing Scan ${success ? 'Completed' : 'Failed'}`,
+    color: success ? (riskScore >= 70 ? 0xe8000f : (riskScore >= 40 ? 0xffcc00 : 0x00cc44)) : 0xe8000f,
+    timestamp: timestamp,
+    footer: {
+      text: 'AntiSec Phishing Intelligence Scanner',
+      icon_url: 'https://cdn.discordapp.com/icons/...'
+    },
     fields: [
       {
         name: '🎯 Target URL',
-        value: url.length > 100 ? url.substring(0, 100) + '...' : url,
+        value: `\`\`\`${url.length > 200 ? url.substring(0, 197) + '...' : url}\`\`\``,
         inline: false
       },
       {
         name: '🌐 Domain',
-        value: domain,
+        value: `\`${domain}\``,
         inline: true
       },
       {
-        name: '📊 Risk Score',
-        value: `${riskScore}/100`,
+        name: `${riskEmoji} Risk Score`,
+        value: `**${riskScore}/100**`,
         inline: true
       },
       {
         name: '⚖️ Verdict',
-        value: verdict,
+        value: `\`${verdict || (success ? 'UNKNOWN' : 'SCAN_ERROR')}\``,
         inline: true
       },
       {
-        name: '✅ Legitimate',
-        value: isLegitimate ? 'Yes' : 'No',
+        name: '📊 Statistics',
+        value: `Patterns: ${patternsCount}\nWebhooks: ${webhooksCount}`,
         inline: true
       },
       {
-        name: '🔍 Patterns Found',
-        value: patterns.length > 0 ? patterns.map(p => `• ${p.description.substring(0, 60)}`).join('\n') : 'None',
+        name: '🖥️ Client Info',
+        value: `IP: \`${clientIp || 'unknown'}\`\nProvider: \`${getProvider(clientIp)}\``,
+        inline: true
+      },
+      {
+        name: '🔧 User Agent',
+        value: `\`\`\`${(userAgent || 'unknown').substring(0, 100)}\`\`\``,
         inline: false
-      },
-      {
-        name: '🔗 Discord Webhooks',
-        value: webhooks.length > 0 ? webhooks.map(w => `• ${w.url.substring(0, 80)}`).join('\n') : 'None detected',
-        inline: false
-      },
-      {
-        name: '📝 Form Analysis',
-        value: `Login form: ${formAnalysis.hasLoginForm ? 'Yes' : 'No'}\nPassword fields: ${formAnalysis.passwordFields}\nTotal forms: ${formAnalysis.total}`,
-        inline: true
       }
-    ],
-    footer: {
-      text: 'AntiSec Phishing Intelligence Scanner'
-    }
+    ]
   };
   
-  // Client-Info-Felder
-  const clientFields = [
-    {
-      name: '🖥️ Client IP',
-      value: ip || 'Unknown',
-      inline: true
-    },
-    {
-      name: '📍 Location',
-      value: `${city || 'Unknown'}, ${country || 'Unknown'}`,
-      inline: true
-    },
-    {
-      name: '🏢 ISP/Provider',
-      value: provider || 'Unknown',
-      inline: true
-    },
-    {
-      name: '🌍 User Agent',
-      value: userAgent ? userAgent.substring(0, 100) + (userAgent.length > 100 ? '...' : '') : 'Unknown',
-      inline: false
-    }
-  ];
-  
-  embed.fields.push(...clientFields);
-  
-  // Zusätzliche Warnung bei kritischen Ergebnissen
-  if (riskScore >= 70) {
+  if (!success && errorMessage) {
     embed.fields.push({
-      name: '⚠️ CRITICAL WARNING',
-      value: 'High risk score detected! This may be a phishing site.',
+      name: '⚠️ Error',
+      value: `\`\`\`${errorMessage.substring(0, 200)}\`\`\``,
       inline: false
     });
   }
   
-  if (webhooks.length > 0) {
-    embed.fields.push({
-      name: '🔴 DISCORD WEBHOOK DETECTED',
-      value: 'This site contains Discord webhooks that can exfiltrate user data!',
-      inline: false
-    });
+  // Key-Rotation Stats (falls verfügbar)
+  if (keyManager) {
+    const stats = keyManager.getStats();
+    const statsText = Object.entries(stats).map(([name, data]) => 
+      `${name}: ${data.successes} OK, ${data.failures} fails`
+    ).join('\n');
+    if (statsText) {
+      embed.fields.push({
+        name: '🔑 API Key Status',
+        value: `\`\`\`${statsText}\`\`\``,
+        inline: false
+      });
+    }
   }
   
   try {
-    const response = await fetch(DISCORD_WEBHOOK_URL, {
+    const response = await fetch(LOG_WEBHOOK_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         embeds: [embed],
-        username: 'AntiSec Scanner',
-        avatar_url: 'https://cdn.discordapp.com/icons/...' // Optional
+        username: 'AntiSec Scanner Log',
+        avatar_url: 'https://cdn.discordapp.com/icons/...'
       })
     });
     
-    if (response.ok) {
-      console.log('[DiscordLog] Log sent successfully');
+    if (!response.ok) {
+      console.error(`[Logging] Failed to send webhook: ${response.status}`);
     } else {
-      console.log(`[DiscordLog] Failed to send log: ${response.status}`);
+      console.log('[Logging] Successfully sent scan log to Discord');
     }
   } catch (error) {
-    console.error('[DiscordLog] Error sending log:', error.message);
+    console.error('[Logging] Webhook error:', error.message);
   }
 }
 
-// Client-Info extrahieren (IP, Provider, Location)
-async function getClientInfo(req) {
-  // IP-Adresse ermitteln (Vercel-spezifisch)
-  const ip = req.headers['x-forwarded-for']?.split(',')[0] || 
-             req.socket.remoteAddress || 
-             req.connection.remoteAddress || 
-             'Unknown';
+// ==================== CLIENT IP ERMITTELN ====================
+
+function getClientIp(req) {
+  // Verschiedene Header für IP-Ermittlung (hinter Proxies)
+  const forwarded = req.headers['x-forwarded-for'];
+  const realIp = req.headers['x-real-ip'];
+  const cfConnectingIp = req.headers['cf-connecting-ip'];
+  const vercelIp = req.headers['x-vercel-forwarded-for'];
   
-  const userAgent = req.headers['user-agent'] || 'Unknown';
+  if (cfConnectingIp) return cfConnectingIp;
+  if (realIp) return realIp;
+  if (forwarded) return forwarded.split(',')[0].trim();
+  if (vercelIp) return vercelIp.split(',')[0].trim();
   
-  // Provider/Location via ip-api.com (kostenlos, keine API-Key nötig)
-  let provider = 'Unknown';
-  let country = 'Unknown';
-  let city = 'Unknown';
-  
-  try {
-    // Nur für öffentliche IPs, nicht für localhost
-    if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && ip !== 'Unknown') {
-      const geoResponse = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,city,isp`, {
-        signal: AbortSignal.timeout(3000)
-      });
-      const geoData = await geoResponse.json();
-      if (geoData.status === 'success') {
-        country = geoData.country || 'Unknown';
-        city = geoData.city || 'Unknown';
-        provider = geoData.isp || 'Unknown';
-      }
-    }
-  } catch (error) {
-    console.log('[ClientInfo] Geo lookup failed:', error.message);
-  }
-  
-  return { ip, userAgent, provider, country, city };
+  return req.socket?.remoteAddress || 'unknown';
 }
 
-// ==================== PHISHING PATTERNS ====================
+function getUserAgent(req) {
+  return req.headers['user-agent'] || 'unknown';
+}
+
+// ==================== BASIC PATTERNS ====================
 
 const PHISHING_PATTERNS = [
   { pattern: /<input[^>]*type=["']password["']/gi, severity: 'medium', category: 'password_field', description: 'Password input field detected' },
@@ -307,13 +236,14 @@ const PHISHING_PATTERNS = [
   { pattern: /account.*suspended|gesperrt|suspendu|suspended/i, severity: 'high', category: 'scare', description: 'Account suspension threat detected' },
   { pattern: /verify.*identity|identität.*bestätigen|verify your identity/i, severity: 'high', category: 'scare', description: 'Identity verification request' },
   { pattern: /bitcoin|ethereum|crypto|wallet.*connect|metamask/i, severity: 'high', category: 'crypto', description: 'Cryptocurrency or wallet connection request' },
+  { pattern: /window\.location|location\.href|location\.replace/i, severity: 'low', category: 'redirect', description: 'JavaScript redirect detected' },
+  { pattern: /document\.cookie/i, severity: 'medium', category: 'cookie', description: 'JavaScript cookie access detected' },
   { pattern: /https?:\/\/discord\.com\/api\/webhooks\//i, severity: 'critical', category: 'webhook', description: 'Discord webhook found - data exfiltration risk' },
+  { pattern: /<form[^>]*action=["'][^"']*\.(php|asp|jsp|py|pl)/i, severity: 'medium', category: 'backend', description: 'Form submits to server-side script' },
   { pattern: /two.?factor|2fa|multi.?factor|mfa/i, severity: 'medium', category: '2fa', description: '2FA/MFA verification request' },
   { pattern: /passport|reisepass|passeport|pasaporte/i, severity: 'high', category: 'identity', description: 'Passport information requested' },
   { pattern: /driver.?license|führerschein|permis.?conduire/i, severity: 'high', category: 'identity', description: 'Driver license information requested' }
 ];
-
-// ==================== HELPER FUNCTIONS ====================
 
 function detectBasicPatterns(html) {
   const patterns = [];
@@ -328,7 +258,6 @@ function detectBasicPatterns(html) {
       });
     }
   }
-  
   const unique = [];
   const seen = new Set();
   for (const p of patterns) {
@@ -351,7 +280,6 @@ function analyzeForms(html) {
   const passwordInputs = (html.match(/type=["']password["']/gi) || []).length;
   const emailInputs = (html.match(/type=["']email["']/gi) || []).length;
   const actionMissing = (html.match(/<form[^>]*(?:action=["']\s*["']|action=["']#["'])/gi) || []).length;
-  
   return {
     total: formCount,
     passwordFields: passwordInputs,
@@ -368,15 +296,88 @@ function getSourcePreview(html, maxLength = 5000) {
   return clean.substring(0, maxLength) + '\n\n... [TRUNCATED]';
 }
 
-// ==================== AI ANALYSIS ====================
+// ==================== AI ANALYSIS WITH KEY ROTATION ====================
+
+async function callGroqWithRetry(messages, maxRetries = 3) {
+  const manager = getKeyManager();
+  let lastError = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const currentKey = manager.getCurrentKey();
+    if (!currentKey) {
+      throw new Error('No valid GROQ_API_KEY configured');
+    }
+    
+    try {
+      console.log(`[Groq] Attempt ${attempt + 1}/${maxRetries} using ${currentKey.name}`);
+      
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${currentKey.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(messages),
+        signal: AbortSignal.timeout(30000)
+      });
+      
+      if (response.status === 429) {
+        // Rate Limit - Key rotieren
+        console.log(`[Groq] Rate limit on ${currentKey.name}, rotating key`);
+        manager.recordFailure(currentKey.name);
+        manager.getNextKey();
+        lastError = new Error(`Rate limit on ${currentKey.name}`);
+        continue;
+      }
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log(`[Groq] Error on ${currentKey.name}: ${response.status} - ${errorText}`);
+        manager.recordFailure(currentKey.name);
+        manager.getNextKey();
+        lastError = new Error(`HTTP ${response.status}: ${errorText}`);
+        continue;
+      }
+      
+      const data = await response.json();
+      manager.recordSuccess(currentKey.name);
+      return data;
+      
+    } catch (error) {
+      console.log(`[Groq] Exception on ${currentKey.name}: ${error.message}`);
+      manager.recordFailure(currentKey.name);
+      manager.getNextKey();
+      lastError = error;
+    }
+  }
+  
+  throw lastError || new Error('All API keys exhausted or failed');
+}
 
 async function analyzeWithAI(url, domain, html, basicPatterns, webhooks, formAnalysis, httpStatus) {
+  const keys = getAvailableApiKeys();
+  const hasValidKeys = keys.length > 0 && keys[0].value !== 'YOUR_GROQ_API_KEY_HERE';
+  
+  if (!hasValidKeys) {
+    const hasCritical = basicPatterns.some(p => p.severity === 'critical');
+    const hasHigh = basicPatterns.some(p => p.severity === 'high');
+    const riskScore = hasCritical ? 90 : (hasHigh ? 70 : (basicPatterns.length > 0 ? 40 : 10));
+    return {
+      riskScore: riskScore,
+      verdict: riskScore > 60 ? 'SUSPICIOUS' : (riskScore > 30 ? 'CAUTION' : 'SAFE'),
+      isLegitimate: riskScore < 30,
+      report: `⚠️ **AI ANALYSIS NOT AVAILABLE**\n\nNo valid GROQ_API_KEY configured. Please add API keys to environment variables.\n\nCurrent scan results are based on pattern matching only.`,
+      shortReason: 'AI analysis unavailable - configure API keys',
+      userWarning: riskScore > 50 ? 'Proceed with caution' : 'No immediate warnings'
+    };
+  }
+  
   const patternSummary = basicPatterns.length > 0 
-    ? basicPatterns.map(p => `• ${p.description} (${p.severity.toUpperCase()} severity)`).join('\n')
+    ? basicPatterns.map(p => `• ${p.description} (${p.severity.toUpperCase()})`).join('\n')
     : '• No suspicious patterns detected';
     
   const webhookSummary = webhooks.length > 0 
-    ? `⚠️ CRITICAL: ${webhooks.length} Discord webhook(s) detected!`
+    ? `⚠️⚠️⚠️ CRITICAL: ${webhooks.length} Discord webhook(s) detected!`
     : '• No Discord webhooks detected';
   
   const prompt = `You are a phishing detection expert. Analyze this website:
@@ -387,108 +388,118 @@ HTTP Status: ${httpStatus}
 
 Login form: ${formAnalysis.hasLoginForm ? 'Yes' : 'No'}
 Password fields: ${formAnalysis.passwordFields}
-Discord webhooks: ${webhooks.length > 0 ? 'YES' : 'No'}
+Discord webhooks: ${webhooks.length > 0 ? 'YES (CRITICAL)' : 'No'}
 
 Patterns found:
 ${patternSummary}
 
 ${webhookSummary}
 
-IMPORTANT RULES:
-1. AntiSec tools (domains with "antisec", "phishing-scanner", "phishscan") are LEGITIMATE - give riskScore 0
-2. YouTube, Google, Facebook, Amazon, Microsoft, Apple, Netflix, Spotify, Twitter, Instagram, LinkedIn, Wikipedia, GitHub, PayPal, banks are LEGITIMATE - give low risk (0-15)
-3. Discord webhooks = automatic +30 to risk score
-4. Login forms alone do NOT make a phishing site
+RULES:
+1. AntiSec tools (domains with "antisec", "phishing-scanner", "phishscan") are LEGITIMATE - riskScore 0
+2. YouTube, Google, Facebook, Amazon, Microsoft, Apple, Netflix, Spotify, Twitter, GitHub, PayPal are LEGITIMATE
+3. Discord webhooks = automatic +30 risk score
+4. Login form alone does NOT make a phishing site
 
-Provide a detailed analysis (300-400 words) then the JSON.`;
+Respond with JSON only:
+{
+  "riskScore": 0-100,
+  "verdict": "PHISHING|SUSPICIOUS|LEGITIMATE",
+  "isLegitimate": true/false,
+  "shortReason": "brief reason",
+  "userWarning": "what to do"
+}`;
 
-  const messages = [
-    { 
-      role: 'system', 
-      content: 'You are a senior cybersecurity analyst. Provide detailed phishing analysis. Always return JSON at the end.' 
-    },
-    { role: 'user', content: prompt }
-  ];
-  
   try {
-    const data = await callGroqWithKeyRotation(messages, 1500, 0.2);
-    const aiResponse = data.choices[0].message.content;
+    const groqResponse = await callGroqWithRetry({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: 'You are a phishing detection expert. Respond ONLY with valid JSON.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.2,
+      max_tokens: 500
+    });
     
-    // JSON extrahieren
-    let jsonResult = {
-      riskScore: 50,
-      verdict: "SUSPICIOUS",
-      isLegitimate: false,
-      shortReason: "Analysis completed",
-      userWarning: "Proceed with caution"
-    };
+    const aiResponse = groqResponse.choices[0].message.content;
+    const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
     
-    const jsonMatch = aiResponse.match(/\{[\s\S]*"riskScore"[\s\S]*\}/);
     if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        jsonResult = {
-          riskScore: Math.min(100, Math.max(0, parsed.riskScore || 50)),
-          verdict: parsed.verdict || "SUSPICIOUS",
-          isLegitimate: parsed.isLegitimate === true,
-          shortReason: parsed.shortReason || "Analysis completed",
-          userWarning: parsed.userWarning || "Proceed with caution"
-        };
-      } catch (e) {}
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        riskScore: Math.min(100, Math.max(0, parsed.riskScore || 50)),
+        verdict: parsed.verdict || 'SUSPICIOUS',
+        isLegitimate: parsed.isLegitimate === true,
+        shortReason: parsed.shortReason || 'Analysis completed',
+        userWarning: parsed.userWarning || 'Proceed with caution',
+        report: generateDetailedReport(url, domain, parsed.riskScore || 50, parsed.verdict, basicPatterns, webhooks, formAnalysis)
+      };
     }
     
-    const cleanReport = aiResponse.replace(/\{[\s\S]*"riskScore"[\s\S]*\}/, '').trim();
-    
-    return {
-      riskScore: jsonResult.riskScore,
-      verdict: jsonResult.verdict,
-      isLegitimate: jsonResult.isLegitimate,
-      shortReason: jsonResult.shortReason,
-      userWarning: jsonResult.userWarning,
-      report: cleanReport || generateFallbackReport(url, domain, basicPatterns, webhooks, formAnalysis, jsonResult.riskScore)
-    };
+    throw new Error('Invalid JSON response');
     
   } catch (error) {
     console.error('AI analysis error:', error);
-    const hasCritical = basicPatterns.some(p => p.severity === 'critical');
-    const hasHigh = basicPatterns.some(p => p.severity === 'high');
-    const riskScore = hasCritical ? 90 : (hasHigh ? 70 : (basicPatterns.length > 0 ? 40 : 15));
-    
+    const riskScore = webhooks.length > 0 ? 85 : (basicPatterns.length > 0 ? 50 : 20);
     return {
       riskScore: riskScore,
-      verdict: riskScore > 60 ? 'SUSPICIOUS' : (riskScore > 30 ? 'CAUTION' : 'SAFE'),
+      verdict: riskScore > 60 ? 'SUSPICIOUS' : 'SAFE',
       isLegitimate: riskScore < 30,
-      shortReason: 'AI temporarily unavailable - using pattern detection',
-      userWarning: riskScore > 50 ? 'Do not enter personal information' : 'Proceed with normal caution',
-      report: generateFallbackReport(url, domain, basicPatterns, webhooks, formAnalysis, riskScore)
+      shortReason: `AI error: ${error.message}`,
+      userWarning: riskScore > 50 ? 'Do not enter personal information' : 'Proceed with caution',
+      report: generateDetailedReport(url, domain, riskScore, 'MANUAL_FALLBACK', basicPatterns, webhooks, formAnalysis)
     };
   }
 }
 
-function generateFallbackReport(url, domain, patterns, webhooks, formAnalysis, riskScore) {
-  const riskLevel = riskScore >= 70 ? 'HIGH RISK' : (riskScore >= 40 ? 'MEDIUM RISK' : 'LOW RISK');
+function generateDetailedReport(url, domain, riskScore, verdict, patterns, webhooks, formAnalysis) {
   const riskEmoji = riskScore >= 70 ? '🔴' : (riskScore >= 40 ? '🟡' : '🟢');
+  const verdictText = verdict === 'PHISHING' ? '⚠️ PHISHING SUSPECTED' : (verdict === 'SUSPICIOUS' ? '⚠️ SUSPICIOUS' : '✅ LEGITIMATE');
   
-  let report = `${riskEmoji} **PHISHING SCAN REPORT - ${riskLevel} (${riskScore}/100)**\n\n`;
+  let report = `${riskEmoji} **${verdictText}** (Risk: ${riskScore}/100)\n\n`;
   report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  report += `**Target:** ${url}\n**Domain:** ${domain}\n\n`;
+  report += `**Target:** ${url}\n`;
+  report += `**Domain:** ${domain}\n\n`;
   report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
   
   if (patterns.length > 0) {
-    report += `**Detected Patterns:**\n${patterns.map(p => `• ${p.description}`).join('\n')}\n\n`;
+    report += `**Detected Patterns:**\n`;
+    patterns.forEach(p => {
+      const emoji = p.severity === 'critical' ? '🔴' : (p.severity === 'high' ? '🟠' : (p.severity === 'medium' ? '🟡' : '🔵'));
+      report += `  ${emoji} ${p.description}\n`;
+    });
+    report += `\n`;
+  } else {
+    report += `✅ No suspicious patterns detected\n\n`;
   }
   
   if (webhooks.length > 0) {
-    report += `🔴 **CRITICAL:** ${webhooks.length} Discord webhook(s) detected!\n\n`;
+    report += `🔴🔴🔴 **CRITICAL:** ${webhooks.length} Discord webhook(s) found!\n`;
+    report += `   → Data can be exfiltrated to attackers in real-time\n\n`;
   }
   
-  report += `**Recommendation:** ${riskScore >= 70 ? 'DO NOT use this site!' : (riskScore >= 40 ? 'Proceed with caution' : 'No immediate action needed')}\n`;
+  if (formAnalysis.hasLoginForm) {
+    report += `ℹ️ Login form detected (${formAnalysis.passwordFields} password field(s))\n\n`;
+  }
+  
+  if (riskScore >= 70) {
+    report += `**Recommendation:** DO NOT use this site! Close the page immediately.\n`;
+  } else if (riskScore >= 40) {
+    report += `**Recommendation:** Proceed with caution. Verify the URL carefully.\n`;
+  } else {
+    report += `**Recommendation:** No immediate action required. Normal caution is sufficient.\n`;
+  }
+  
+  report += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  report += `*Scan performed by AntiSec Phishing Intelligence*`;
+  
   return report;
 }
 
 // ==================== MAIN HANDLER ====================
 
 export default async function handler(req, res) {
+  // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   
@@ -505,6 +516,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Missing "url" parameter' });
   }
 
+  // Client Info für Logging
+  const clientIp = getClientIp(req);
+  const userAgent = getUserAgent(req);
+  const scanStartTime = Date.now();
+
   let urlObj;
   try {
     urlObj = new URL(targetUrl);
@@ -512,14 +528,12 @@ export default async function handler(req, res) {
       throw new Error('Only HTTP/HTTPS allowed');
     }
   } catch (e) {
+    // Auch Fehler loggen
+    await sendToDiscordLog(targetUrl, 'invalid', 0, 'INVALID_URL', clientIp, userAgent, 0, 0, false, e.message);
     return res.status(400).json({ success: false, error: `Invalid URL: ${e.message}` });
   }
 
-  console.log(`[AntiSec] Starting scan for: ${targetUrl}`);
-  
-  // Client-Info für Logging
-  const clientInfo = await getClientInfo(req);
-  const scanTimestamp = new Date().toISOString();
+  console.log(`[AntiSec] Scan: ${targetUrl} from ${clientIp}`);
 
   try {
     const fetchResponse = await fetch(targetUrl, {
@@ -540,8 +554,6 @@ export default async function handler(req, res) {
     const webhooks = detectWebhooks(html);
     const formAnalysis = analyzeForms(html);
     
-    console.log(`[AntiSec] Patterns: ${basicPatterns.length}, Webhooks: ${webhooks.length}`);
-
     const aiResult = await analyzeWithAI(
       targetUrl, urlObj.hostname, html, basicPatterns, webhooks, formAnalysis, httpStatus
     );
@@ -549,21 +561,22 @@ export default async function handler(req, res) {
     const sourcePreview = getSourcePreview(html);
     const loginForms = formAnalysis.hasLoginForm ? formAnalysis.total : 0;
     
-    const scanData = {
-      url: targetUrl,
-      domain: urlObj.hostname,
-      riskScore: aiResult.riskScore,
-      verdict: aiResult.verdict,
-      isLegitimate: aiResult.isLegitimate,
-      patterns: basicPatterns,
-      webhooks: webhooks,
-      loginForms: loginForms,
-      formAnalysis: formAnalysis,
-      scanTimestamp: scanTimestamp
-    };
+    // Erfolgs-Log an Discord senden
+    await sendToDiscordLog(
+      targetUrl, 
+      urlObj.hostname, 
+      aiResult.riskScore, 
+      aiResult.verdict,
+      clientIp, 
+      userAgent, 
+      basicPatterns.length, 
+      webhooks.length, 
+      true, 
+      null
+    );
     
-    // Discord Log senden (asynchron, nicht blockierend)
-    sendToDiscordLog(scanData, clientInfo).catch(err => console.error('Discord log error:', err));
+    const scanDuration = Date.now() - scanStartTime;
+    console.log(`[AntiSec] Complete: ${targetUrl} - Risk ${aiResult.riskScore} - ${scanDuration}ms`);
 
     return res.status(200).json({
       success: true,
@@ -576,20 +589,29 @@ export default async function handler(req, res) {
         pattern: p.description,
         severity: p.severity,
         location: 'HTML content',
-        category: p.category
+        category: p.category,
+        occurrences: p.count || 1
       })),
-      webhooks: webhooks.map(w => ({ url: w, type: 'Discord Webhook' })),
+      webhooks: webhooks.map(w => ({ url: w, type: 'Discord Webhook', risk: 'critical' })),
       loginForms: loginForms,
       sizeKB: sizeKB,
+      httpStatus: httpStatus,
       groqReport: aiResult.report,
       sourcePreview: sourcePreview,
       shortReason: aiResult.shortReason,
       userWarning: aiResult.userWarning,
-      scanTimestamp: scanTimestamp
+      scanDurationMs: scanDuration,
+      apiKeysAvailable: getAvailableApiKeys().length,
+      scanTimestamp: new Date().toISOString()
     });
 
   } catch (error) {
     console.error(`[AntiSec] Error:`, error.message);
+    
+    // Fehler-Log an Discord senden
+    await sendToDiscordLog(
+      targetUrl, urlObj.hostname, 0, 'SCAN_ERROR', clientIp, userAgent, 0, 0, false, error.message
+    );
     
     return res.status(200).json({
       success: false,
@@ -603,9 +625,11 @@ export default async function handler(req, res) {
       webhooks: [],
       loginForms: 0,
       sizeKB: 0,
-      groqReport: `⚠️ **Scan Failed**\n\nError: ${error.message}`,
+      groqReport: `❌ **Scan Failed**\n\nError: ${error.message}`,
       sourcePreview: '',
-      scanTimestamp: scanTimestamp
+      shortReason: `Scan failed: ${error.message}`,
+      userWarning: 'Unable to scan this URL',
+      scanTimestamp: new Date().toISOString()
     });
   }
-      }
+        }
