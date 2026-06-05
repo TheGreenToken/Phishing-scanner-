@@ -1,68 +1,73 @@
-// api/scan.js - Phishing Scanner mit API-Key-Rotation, Webhook-Logging & Auto-Popup Injection
+// api/scan.js - AI-Powered Phishing Scanner mit API-Key-Rotation & Discord Logging
 
-// ==================== API KEYS ROTATION ====================
-// Unterstützt unendlich viele Keys: GROQ_API_KEY, GROQ_API_KEY2, GROQ_API_KEY3, ...
+// ==================== KONFIGURATION ====================
 
-function getAvailableApiKeys() {
+// Alle GROQ API Keys aus Environment Variablen sammeln (unendlich skalierbar)
+function getGroqApiKeys() {
   const keys = [];
   let i = 1;
   
-  // Prüfe GROQ_API_KEY (ohne Nummer)
-  if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== 'YOUR_GROQ_API_KEY_HERE') {
-    keys.push({ key: process.env.GROQ_API_KEY, index: 0, name: 'GROQ_API_KEY' });
+  // Primärer Key
+  if (process.env.GROQ_API_KEY) {
+    keys.push({ key: process.env.GROQ_API_KEY, index: 1 });
   }
   
-  // Prüfe GROQ_API_KEY2, GROQ_API_KEY3, ...
+  // Weitere Keys: GROQ_API_KEY2, GROQ_API_KEY3, GROQ_API_KEY4, ...
   while (true) {
-    const envName = `GROQ_API_KEY${i}`;
-    const keyValue = process.env[envName];
-    if (keyValue && keyValue !== 'YOUR_GROQ_API_KEY_HERE') {
-      keys.push({ key: keyValue, index: i, name: envName });
-      i++;
-    } else {
-      break;
+    const keyName = `GROQ_API_KEY${i === 1 ? '' : i}`;
+    const keyValue = process.env[keyName];
+    if (!keyValue && i > 1) break;
+    if (keyValue && i > 1) {
+      keys.push({ key: keyValue, index: i });
     }
+    i++;
   }
   
   return keys;
 }
 
-// API-Key-Rotation mit Fehlerbehandlung
+// Discord Webhook URL für Logging
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_LOG_WEBHOOK || null;
+
+// ==================== HELFER FÜR API-KEY-ROTATION ====================
+
 let currentKeyIndex = 0;
-let apiKeys = [];
+const keyUsageCount = new Map(); // Track usage per key
+const keyFailCount = new Map();   // Track failures per key
 
-function refreshApiKeys() {
-  apiKeys = getAvailableApiKeys();
-  if (apiKeys.length === 0) {
-    console.warn('[AntiSec] No API keys configured!');
-  } else {
-    console.log(`[AntiSec] Loaded ${apiKeys.length} API key(s)`);
-  }
-  return apiKeys;
-}
-
-async function callGroqWithRotation(messages, maxTokens = 2000, temperature = 0.2) {
-  if (apiKeys.length === 0) {
-    refreshApiKeys();
-  }
+async function callGroqWithKeyRotation(messages, maxTokens = 2000, temperature = 0.2) {
+  const apiKeys = getGroqApiKeys();
   
   if (apiKeys.length === 0) {
-    throw new Error('No GROQ_API_KEY configured. Please add at least one API key.');
+    throw new Error('No GROQ_API_KEY found in environment variables');
   }
   
-  let lastError = null;
-  const triedKeys = [];
+  // Sortiere Keys nach Erfolgsrate (am Anfang noch nicht, später schon)
+  const sortedKeys = [...apiKeys].sort((a, b) => {
+    const failA = keyFailCount.get(a.key) || 0;
+    const failB = keyFailCount.get(b.key) || 0;
+    return failA - failB;
+  });
   
-  for (let attempt = 0; attempt < apiKeys.length; attempt++) {
-    const keyIndex = (currentKeyIndex + attempt) % apiKeys.length;
-    const apiKey = apiKeys[keyIndex];
+  // Rotiere durch die Keys (Round Robin mit Fehlervermeidung)
+  let attempts = 0;
+  const maxAttempts = sortedKeys.length;
+  
+  for (let offset = 0; offset < maxAttempts; offset++) {
+    const keyIndex = (currentKeyIndex + offset) % sortedKeys.length;
+    const apiKey = sortedKeys[keyIndex];
     
-    if (triedKeys.includes(apiKey.name)) continue;
-    triedKeys.push(apiKey.name);
+    if (!apiKey) continue;
     
-    console.log(`[AntiSec] Trying API key: ${apiKey.name} (attempt ${attempt + 1}/${apiKeys.length})`);
+    // Überspringe Keys mit vielen Fehlern (temporär)
+    if ((keyFailCount.get(apiKey.key) || 0) > 3) {
+      console.log(`[KeyRotation] Skipping key ${apiKey.index} due to ${keyFailCount.get(apiKey.key)} failures`);
+      continue;
+    }
     
     try {
+      console.log(`[KeyRotation] Trying key ${apiKey.index} (attempt ${attempts + 1}/${maxAttempts})`);
+      
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -77,129 +82,222 @@ async function callGroqWithRotation(messages, maxTokens = 2000, temperature = 0.
         })
       });
       
+      if (response.ok) {
+        // Erfolg: Key verwenden und Zähler aktualisieren
+        currentKeyIndex = (keyIndex + 1) % sortedKeys.length;
+        keyUsageCount.set(apiKey.key, (keyUsageCount.get(apiKey.key) || 0) + 1);
+        keyFailCount.set(apiKey.key, 0); // Fehlerzähler zurücksetzen
+        
+        const data = await response.json();
+        console.log(`[KeyRotation] Success with key ${apiKey.index} (Total usage: ${keyUsageCount.get(apiKey.key)})`);
+        return data;
+      }
+      
+      // Rate Limit Error?
+      const errorText = await response.text();
+      console.log(`[KeyRotation] Key ${apiKey.index} failed: HTTP ${response.status} - ${errorText.substring(0, 100)}`);
+      
       if (response.status === 429) {
-        console.warn(`[AntiSec] Rate limit hit on ${apiKey.name}, trying next key...`);
-        lastError = new Error(`Rate limit on ${apiKey.name}`);
+        // Rate Limit - Key als "überlastet" markieren
+        keyFailCount.set(apiKey.key, (keyFailCount.get(apiKey.key) || 0) + 1);
+        console.log(`[KeyRotation] Rate limit on key ${apiKey.index}, failures: ${keyFailCount.get(apiKey.key)}`);
+        continue; // Nächsten Key versuchen
+      }
+      
+      if (response.status === 401) {
+        // Invalid Key - permanent ausschließen
+        keyFailCount.set(apiKey.key, 999); // Sehr hohe Zahl = permanent deaktiviert
+        console.log(`[KeyRotation] Invalid key ${apiKey.index}, permanently disabled`);
         continue;
       }
       
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} on ${apiKey.name}`);
-      }
-      
-      currentKeyIndex = (keyIndex + 1) % apiKeys.length;
-      console.log(`[AntiSec] Success with ${apiKey.name}, next start index: ${currentKeyIndex}`);
-      
-      return await response.json();
+      // Andere Fehler - kurze Pause und nächsten Key
+      keyFailCount.set(apiKey.key, (keyFailCount.get(apiKey.key) || 0) + 1);
+      continue;
       
     } catch (error) {
-      console.error(`[AntiSec] Error with ${apiKey.name}:`, error.message);
-      lastError = error;
+      console.log(`[KeyRotation] Key ${apiKey.index} error: ${error.message}`);
+      keyFailCount.set(apiKey.key, (keyFailCount.get(apiKey.key) || 0) + 1);
+      continue;
     }
   }
   
-  throw new Error(`All API keys failed. Last error: ${lastError?.message}`);
+  throw new Error('All GROQ API keys exhausted or rate limited');
 }
 
-// ==================== WEBHOOK LOGGING ====================
+// ==================== DISCORD LOGGING ====================
 
-const WEBHOOK_URL = process.env.LOG_WEBHOOK_URL || null;
-
-async function sendScanLog(url, domain, riskScore, verdict, clientInfo, patternsCount, webhooksCount, success) {
-  if (!WEBHOOK_URL) {
-    console.log('[AntiSec] No LOG_WEBHOOK_URL configured - skipping log');
+async function sendToDiscordLog(scanData, clientInfo) {
+  if (!DISCORD_WEBHOOK_URL) {
+    console.log('[DiscordLog] No webhook URL configured - skipping');
     return;
   }
   
-  const timestamp = new Date().toISOString();
-  const color = riskScore >= 70 ? 0xff0000 : (riskScore >= 40 ? 0xffaa00 : 0x00ff00);
-  const statusEmoji = success ? '✅' : '❌';
+  const { url, domain, riskScore, verdict, isLegitimate, patterns, webhooks, formAnalysis, scanTimestamp } = scanData;
+  const { ip, userAgent, provider, country, city } = clientInfo;
   
+  // Risiko-Farbe für Embed
+  let color = 0x00ff00; // Grün für sicher
+  if (riskScore >= 70) color = 0xff0000; // Rot für Phishing
+  else if (riskScore >= 40) color = 0xffaa00; // Orange für verdächtig
+  
+  const riskEmoji = riskScore >= 70 ? '🔴' : (riskScore >= 40 ? '🟡' : '🟢');
+  
+  // Embed erstellen
   const embed = {
-    title: `${statusEmoji} AntiSec Phishing Scan`,
+    title: `${riskEmoji} Phishing Scan Log`,
+    description: `A scan was performed by **AntiSec Phishing Scanner**`,
     color: color,
-    timestamp: timestamp,
+    timestamp: scanTimestamp,
+    fields: [
+      {
+        name: '🎯 Target URL',
+        value: url.length > 100 ? url.substring(0, 100) + '...' : url,
+        inline: false
+      },
+      {
+        name: '🌐 Domain',
+        value: domain,
+        inline: true
+      },
+      {
+        name: '📊 Risk Score',
+        value: `${riskScore}/100`,
+        inline: true
+      },
+      {
+        name: '⚖️ Verdict',
+        value: verdict,
+        inline: true
+      },
+      {
+        name: '✅ Legitimate',
+        value: isLegitimate ? 'Yes' : 'No',
+        inline: true
+      },
+      {
+        name: '🔍 Patterns Found',
+        value: patterns.length > 0 ? patterns.map(p => `• ${p.description.substring(0, 60)}`).join('\n') : 'None',
+        inline: false
+      },
+      {
+        name: '🔗 Discord Webhooks',
+        value: webhooks.length > 0 ? webhooks.map(w => `• ${w.url.substring(0, 80)}`).join('\n') : 'None detected',
+        inline: false
+      },
+      {
+        name: '📝 Form Analysis',
+        value: `Login form: ${formAnalysis.hasLoginForm ? 'Yes' : 'No'}\nPassword fields: ${formAnalysis.passwordFields}\nTotal forms: ${formAnalysis.total}`,
+        inline: true
+      }
+    ],
     footer: {
       text: 'AntiSec Phishing Intelligence Scanner'
-    },
-    fields: [
-      { name: '🎯 Target URL', value: url.length > 100 ? url.substring(0, 97) + '...' : url, inline: false },
-      { name: '🌐 Domain', value: domain, inline: true },
-      { name: '📊 Risk Score', value: `${riskScore}/100`, inline: true },
-      { name: '⚖️ Verdict', value: verdict, inline: true },
-      { name: '🔍 Patterns Found', value: patternsCount.toString(), inline: true },
-      { name: '# Webhooks Detected', value: webhooksCount.toString(), inline: true },
-      { name: '🖥️ Client Info', value: clientInfo || 'Unknown', inline: false },
-      { name: '📅 Scan Time', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
-    ]
+    }
   };
   
+  // Client-Info-Felder
+  const clientFields = [
+    {
+      name: '🖥️ Client IP',
+      value: ip || 'Unknown',
+      inline: true
+    },
+    {
+      name: '📍 Location',
+      value: `${city || 'Unknown'}, ${country || 'Unknown'}`,
+      inline: true
+    },
+    {
+      name: '🏢 ISP/Provider',
+      value: provider || 'Unknown',
+      inline: true
+    },
+    {
+      name: '🌍 User Agent',
+      value: userAgent ? userAgent.substring(0, 100) + (userAgent.length > 100 ? '...' : '') : 'Unknown',
+      inline: false
+    }
+  ];
+  
+  embed.fields.push(...clientFields);
+  
+  // Zusätzliche Warnung bei kritischen Ergebnissen
   if (riskScore >= 70) {
-    embed.fields.push({ name: '⚠️ CRITICAL WARNING', value: 'High risk phishing site detected!', inline: false });
+    embed.fields.push({
+      name: '⚠️ CRITICAL WARNING',
+      value: 'High risk score detected! This may be a phishing site.',
+      inline: false
+    });
   }
-  if (webhooksCount > 0) {
-    embed.fields.push({ name: '🔴 DISCORD WEBHOOKS FOUND', value: `⚠️ ${webhooksCount} webhook(s) detected!`, inline: false });
+  
+  if (webhooks.length > 0) {
+    embed.fields.push({
+      name: '🔴 DISCORD WEBHOOK DETECTED',
+      value: 'This site contains Discord webhooks that can exfiltrate user data!',
+      inline: false
+    });
   }
   
   try {
-    await fetch(WEBHOOK_URL, {
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ embeds: [embed], username: 'AntiSec Scanner' })
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        embeds: [embed],
+        username: 'AntiSec Scanner',
+        avatar_url: 'https://cdn.discordapp.com/icons/...' // Optional
+      })
     });
-    console.log('[AntiSec] Scan log sent to webhook');
-  } catch (error) {
-    console.error('[AntiSec] Webhook error:', error.message);
-  }
-}
-
-// ==================== POPUP HTML (wird injectet) ====================
-
-function getPopupHTML() {
-  return `
-<div id="antisec-server-popup" style="position:fixed; bottom:20px; right:20px; z-index:99999; animation:antisecSlideUp 0.3s ease; font-family:'Barlow',sans-serif;">
-  <div style="background:#030303; border:1px solid #e8000f; border-left:3px solid #e8000f; padding:16px 20px; max-width:320px; box-shadow:0 0 20px rgba(232,0,15,0.2); border-radius:0;">
-    <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
-      <div style="width:40px; height:40px; background:rgba(88,101,242,0.1); border:1px solid rgba(88,101,242,0.3); display:flex; align-items:center; justify-content:center; font-family:'Share Tech Mono',monospace; font-size:1.2rem; color:#c8c8c8;">#</div>
-      <div>
-        <div style="font-family:'Oswald',sans-serif; font-weight:600; font-size:0.9rem; letter-spacing:0.1em; color:#fff;">ANTISEC NETWORK</div>
-        <div style="font-family:'Share Tech Mono',monospace; font-size:0.55rem; color:#e8000f;">OPERATORS ONLY</div>
-      </div>
-    </div>
-    <div style="font-family:'Barlow',sans-serif; font-size:0.75rem; color:#aaa; line-height:1.5; margin-bottom:14px;">Join our private server for exclusive OSINT tools, early access, and live threat intelligence.</div>
-    <div style="display:flex; gap:10px;">
-      <a href="https://discord.gg/6hv9T4UCN7" target="_blank" style="flex:1; background:#e8000f; border:none; padding:8px; font-family:'Oswald',sans-serif; font-weight:600; font-size:0.7rem; letter-spacing:0.1em; color:#000; text-align:center; text-decoration:none; text-transform:uppercase; cursor:crosshair;">Join Now →</a>
-      <button onclick="document.getElementById('antisec-server-popup').style.display='none'; localStorage.setItem('antisecPopupClosed','true');" style="background:transparent; border:1px solid #333; padding:8px 12px; font-family:'Share Tech Mono',monospace; font-size:0.6rem; color:#666; cursor:crosshair;">Close</button>
-    </div>
-  </div>
-</div>
-<style>
-  @keyframes antisecSlideUp {
-    from { opacity:0; transform:translateY(20px); }
-    to { opacity:1; transform:translateY(0); }
-  }
-</style>
-<script>
-  (function() {
-    var popupClosed = localStorage.getItem('antisecPopupClosed');
-    if (!popupClosed) {
-      setTimeout(function() {
-        var popup = document.getElementById('antisec-server-popup');
-        if (popup) popup.style.display = 'block';
-        setTimeout(function() {
-          var popup = document.getElementById('antisec-server-popup');
-          if (popup && popup.style.display === 'block') {
-            popup.style.display = 'none';
-          }
-        }, 15000);
-      }, 1000);
+    
+    if (response.ok) {
+      console.log('[DiscordLog] Log sent successfully');
+    } else {
+      console.log(`[DiscordLog] Failed to send log: ${response.status}`);
     }
-  })();
-</script>
-`;
+  } catch (error) {
+    console.error('[DiscordLog] Error sending log:', error.message);
+  }
 }
 
-// ==================== BASIC PATTERNS ====================
+// Client-Info extrahieren (IP, Provider, Location)
+async function getClientInfo(req) {
+  // IP-Adresse ermitteln (Vercel-spezifisch)
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] || 
+             req.socket.remoteAddress || 
+             req.connection.remoteAddress || 
+             'Unknown';
+  
+  const userAgent = req.headers['user-agent'] || 'Unknown';
+  
+  // Provider/Location via ip-api.com (kostenlos, keine API-Key nötig)
+  let provider = 'Unknown';
+  let country = 'Unknown';
+  let city = 'Unknown';
+  
+  try {
+    // Nur für öffentliche IPs, nicht für localhost
+    if (ip && !ip.startsWith('127.') && !ip.startsWith('::1') && ip !== 'Unknown') {
+      const geoResponse = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,city,isp`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      const geoData = await geoResponse.json();
+      if (geoData.status === 'success') {
+        country = geoData.country || 'Unknown';
+        city = geoData.city || 'Unknown';
+        provider = geoData.isp || 'Unknown';
+      }
+    }
+  } catch (error) {
+    console.log('[ClientInfo] Geo lookup failed:', error.message);
+  }
+  
+  return { ip, userAgent, provider, country, city };
+}
+
+// ==================== PHISHING PATTERNS ====================
 
 const PHISHING_PATTERNS = [
   { pattern: /<input[^>]*type=["']password["']/gi, severity: 'medium', category: 'password_field', description: 'Password input field detected' },
@@ -209,8 +307,13 @@ const PHISHING_PATTERNS = [
   { pattern: /account.*suspended|gesperrt|suspendu|suspended/i, severity: 'high', category: 'scare', description: 'Account suspension threat detected' },
   { pattern: /verify.*identity|identität.*bestätigen|verify your identity/i, severity: 'high', category: 'scare', description: 'Identity verification request' },
   { pattern: /bitcoin|ethereum|crypto|wallet.*connect|metamask/i, severity: 'high', category: 'crypto', description: 'Cryptocurrency or wallet connection request' },
-  { pattern: /https?:\/\/discord\.com\/api\/webhooks\//i, severity: 'critical', category: 'webhook', description: 'Discord webhook found - data exfiltration risk' }
+  { pattern: /https?:\/\/discord\.com\/api\/webhooks\//i, severity: 'critical', category: 'webhook', description: 'Discord webhook found - data exfiltration risk' },
+  { pattern: /two.?factor|2fa|multi.?factor|mfa/i, severity: 'medium', category: '2fa', description: '2FA/MFA verification request' },
+  { pattern: /passport|reisepass|passeport|pasaporte/i, severity: 'high', category: 'identity', description: 'Passport information requested' },
+  { pattern: /driver.?license|führerschein|permis.?conduire/i, severity: 'high', category: 'identity', description: 'Driver license information requested' }
 ];
+
+// ==================== HELPER FUNCTIONS ====================
 
 function detectBasicPatterns(html) {
   const patterns = [];
@@ -225,6 +328,7 @@ function detectBasicPatterns(html) {
       });
     }
   }
+  
   const unique = [];
   const seen = new Set();
   for (const p of patterns) {
@@ -246,101 +350,71 @@ function analyzeForms(html) {
   const formCount = (html.match(/<form/gi) || []).length;
   const passwordInputs = (html.match(/type=["']password["']/gi) || []).length;
   const emailInputs = (html.match(/type=["']email["']/gi) || []).length;
+  const actionMissing = (html.match(/<form[^>]*(?:action=["']\s*["']|action=["']#["'])/gi) || []).length;
+  
   return {
     total: formCount,
     passwordFields: passwordInputs,
     emailFields: emailInputs,
+    emptyActions: actionMissing,
     hasLoginForm: passwordInputs > 0
   };
 }
 
-function getSourcePreview(html, maxLength = 5000, injectPopup = false) {
-  let clean = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '[SCRIPT REMOVED]');
-  if (clean.length <= maxLength) {
-    let result = clean;
-    if (injectPopup) {
-      result = getPopupHTML() + '\n\n<!-- AntiSec Popup Injected -->\n\n' + result;
-    }
-    return result;
-  }
-  let result = clean.substring(0, maxLength) + '\n\n... [truncated]';
-  if (injectPopup) {
-    result = getPopupHTML() + '\n\n<!-- AntiSec Popup Injected -->\n\n' + result;
-  }
-  return result;
+function getSourcePreview(html, maxLength = 5000) {
+  let clean = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '[SCRIPT CONTENT REMOVED]');
+  clean = clean.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '[STYLE CONTENT REMOVED]');
+  if (clean.length <= maxLength) return clean;
+  return clean.substring(0, maxLength) + '\n\n... [TRUNCATED]';
 }
 
 // ==================== AI ANALYSIS ====================
 
 async function analyzeWithAI(url, domain, html, basicPatterns, webhooks, formAnalysis, httpStatus) {
-  const apiKeysAvailable = getAvailableApiKeys().length;
-  
-  if (apiKeysAvailable === 0) {
-    const riskScore = basicPatterns.some(p => p.severity === 'critical') ? 90 : 
-                     (basicPatterns.some(p => p.severity === 'high') ? 70 : 
-                     (basicPatterns.length > 0 ? 40 : 10));
-    return {
-      riskScore: riskScore,
-      verdict: riskScore > 60 ? 'SUSPICIOUS' : (riskScore > 30 ? 'CAUTION' : 'SAFE'),
-      isLegitimate: riskScore < 30,
-      report: `⚠️ **No Groq API Keys Configured**\n\nPlease add GROQ_API_KEY, GROQ_API_KEY2, etc. to your environment variables.\n\nUsing fallback pattern detection only.`,
-      shortReason: 'No API keys configured',
-      userWarning: 'Configure API keys for AI analysis'
-    };
-  }
-
   const patternSummary = basicPatterns.length > 0 
-    ? basicPatterns.map(p => `• ${p.description} (${p.severity.toUpperCase()})`).join('\n')
+    ? basicPatterns.map(p => `• ${p.description} (${p.severity.toUpperCase()} severity)`).join('\n')
     : '• No suspicious patterns detected';
     
   const webhookSummary = webhooks.length > 0 
-    ? `⚠️⚠️⚠️ CRITICAL: ${webhooks.length} Discord webhook(s) detected!`
+    ? `⚠️ CRITICAL: ${webhooks.length} Discord webhook(s) detected!`
     : '• No Discord webhooks detected';
-
-  const prompt = `You are a senior cybersecurity analyst. Analyze this website:
+  
+  const prompt = `You are a phishing detection expert. Analyze this website:
 
 URL: ${url}
 Domain: ${domain}
 HTTP Status: ${httpStatus}
 
-**Technical indicators:**
-• Login form: ${formAnalysis.hasLoginForm ? 'Yes' : 'No'}
-• Password fields: ${formAnalysis.passwordFields}
-• Discord webhooks: ${webhooks.length > 0 ? 'YES (CRITICAL)' : 'No'}
+Login form: ${formAnalysis.hasLoginForm ? 'Yes' : 'No'}
+Password fields: ${formAnalysis.passwordFields}
+Discord webhooks: ${webhooks.length > 0 ? 'YES' : 'No'}
 
-**Patterns found:**
+Patterns found:
 ${patternSummary}
 
 ${webhookSummary}
 
-**CRITICAL RULES:**
-1. AntiSec tools (domains with "antisec", "phishing-scanner", "phishscan") are LEGITIMATE - riskScore = 0
-2. YouTube, Google, Facebook, Amazon, Microsoft, Apple, Netflix, GitHub, PayPal are LEGITIMATE - riskScore 0-15
+IMPORTANT RULES:
+1. AntiSec tools (domains with "antisec", "phishing-scanner", "phishscan") are LEGITIMATE - give riskScore 0
+2. YouTube, Google, Facebook, Amazon, Microsoft, Apple, Netflix, Spotify, Twitter, Instagram, LinkedIn, Wikipedia, GitHub, PayPal, banks are LEGITIMATE - give low risk (0-15)
 3. Discord webhooks = automatic +30 to risk score
-4. SSN/Credit card requests = high risk (70-100)
+4. Login forms alone do NOT make a phishing site
 
-Provide a detailed analysis (300-400 words) with: Executive Summary, Key Findings, Threat Assessment, Recommendations.
+Provide a detailed analysis (300-400 words) then the JSON.`;
 
-Then provide JSON at the end:
-{
-  "riskScore": (0-100),
-  "verdict": "PHISHING|SUSPICIOUS|LEGITIMATE",
-  "isLegitimate": true/false,
-  "shortReason": "one sentence",
-  "userWarning": "what to do"
-}`;
-
+  const messages = [
+    { 
+      role: 'system', 
+      content: 'You are a senior cybersecurity analyst. Provide detailed phishing analysis. Always return JSON at the end.' 
+    },
+    { role: 'user', content: prompt }
+  ];
+  
   try {
-    const response = await callGroqWithRotation([
-      { 
-        role: 'system', 
-        content: 'You are a phishing detection expert. Provide detailed analysis. End with JSON.' 
-      },
-      { role: 'user', content: prompt }
-    ], 1800, 0.2);
+    const data = await callGroqWithKeyRotation(messages, 1500, 0.2);
+    const aiResponse = data.choices[0].message.content;
     
-    const aiResponse = response.choices[0].message.content;
-    
+    // JSON extrahieren
     let jsonResult = {
       riskScore: 50,
       verdict: "SUSPICIOUS",
@@ -375,35 +449,41 @@ Then provide JSON at the end:
     };
     
   } catch (error) {
-    console.error('AI error:', error);
-    const riskScore = basicPatterns.some(p => p.severity === 'critical') ? 90 : 
-                     (basicPatterns.some(p => p.severity === 'high') ? 70 : 
-                     (basicPatterns.length > 0 ? 40 : 15));
+    console.error('AI analysis error:', error);
+    const hasCritical = basicPatterns.some(p => p.severity === 'critical');
+    const hasHigh = basicPatterns.some(p => p.severity === 'high');
+    const riskScore = hasCritical ? 90 : (hasHigh ? 70 : (basicPatterns.length > 0 ? 40 : 15));
+    
     return {
       riskScore: riskScore,
       verdict: riskScore > 60 ? 'SUSPICIOUS' : (riskScore > 30 ? 'CAUTION' : 'SAFE'),
       isLegitimate: riskScore < 30,
-      shortReason: 'AI temporarily unavailable',
-      userWarning: riskScore > 50 ? 'Do not enter personal information' : 'Proceed with caution',
+      shortReason: 'AI temporarily unavailable - using pattern detection',
+      userWarning: riskScore > 50 ? 'Do not enter personal information' : 'Proceed with normal caution',
       report: generateFallbackReport(url, domain, basicPatterns, webhooks, formAnalysis, riskScore)
     };
   }
 }
 
 function generateFallbackReport(url, domain, patterns, webhooks, formAnalysis, riskScore) {
-  return `## Phishing Scan Report
-
-**Target:** ${url}
-**Domain:** ${domain}
-**Risk Score:** ${riskScore}/100
-
-### Findings
-- Patterns: ${patterns.length}
-- Webhooks: ${webhooks.length}
-- Login forms: ${formAnalysis.hasLoginForm ? 'Yes' : 'No'}
-
-### Recommendation
-${riskScore >= 70 ? 'DO NOT proceed - high risk!' : (riskScore >= 40 ? 'Caution advised' : 'No immediate threats detected')}`;
+  const riskLevel = riskScore >= 70 ? 'HIGH RISK' : (riskScore >= 40 ? 'MEDIUM RISK' : 'LOW RISK');
+  const riskEmoji = riskScore >= 70 ? '🔴' : (riskScore >= 40 ? '🟡' : '🟢');
+  
+  let report = `${riskEmoji} **PHISHING SCAN REPORT - ${riskLevel} (${riskScore}/100)**\n\n`;
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  report += `**Target:** ${url}\n**Domain:** ${domain}\n\n`;
+  report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  
+  if (patterns.length > 0) {
+    report += `**Detected Patterns:**\n${patterns.map(p => `• ${p.description}`).join('\n')}\n\n`;
+  }
+  
+  if (webhooks.length > 0) {
+    report += `🔴 **CRITICAL:** ${webhooks.length} Discord webhook(s) detected!\n\n`;
+  }
+  
+  report += `**Recommendation:** ${riskScore >= 70 ? 'DO NOT use this site!' : (riskScore >= 40 ? 'Proceed with caution' : 'No immediate action needed')}\n`;
+  return report;
 }
 
 // ==================== MAIN HANDLER ====================
@@ -435,15 +515,18 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: `Invalid URL: ${e.message}` });
   }
 
-  const clientInfo = `${req.headers['user-agent'] || 'Unknown'} | ${req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown IP'}`;
+  console.log(`[AntiSec] Starting scan for: ${targetUrl}`);
   
-  console.log(`[AntiSec] Scanning: ${targetUrl}`);
+  // Client-Info für Logging
+  const clientInfo = await getClientInfo(req);
+  const scanTimestamp = new Date().toISOString();
 
   try {
     const fetchResponse = await fetch(targetUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html'
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9'
       },
       redirect: 'follow',
       signal: AbortSignal.timeout(20000)
@@ -457,24 +540,31 @@ export default async function handler(req, res) {
     const webhooks = detectWebhooks(html);
     const formAnalysis = analyzeForms(html);
     
+    console.log(`[AntiSec] Patterns: ${basicPatterns.length}, Webhooks: ${webhooks.length}`);
+
     const aiResult = await analyzeWithAI(
       targetUrl, urlObj.hostname, html, basicPatterns, webhooks, formAnalysis, httpStatus
     );
     
-    // Inject Popup in sourcePreview (wird im Frontend im "Source Preview" Tab angezeigt)
-    const sourcePreview = getSourcePreview(html, 5000, true);
+    const sourcePreview = getSourcePreview(html);
+    const loginForms = formAnalysis.hasLoginForm ? formAnalysis.total : 0;
     
-    await sendScanLog(
-      targetUrl, 
-      urlObj.hostname, 
-      aiResult.riskScore, 
-      aiResult.verdict, 
-      clientInfo,
-      basicPatterns.length,
-      webhooks.length,
-      true
-    );
+    const scanData = {
+      url: targetUrl,
+      domain: urlObj.hostname,
+      riskScore: aiResult.riskScore,
+      verdict: aiResult.verdict,
+      isLegitimate: aiResult.isLegitimate,
+      patterns: basicPatterns,
+      webhooks: webhooks,
+      loginForms: loginForms,
+      formAnalysis: formAnalysis,
+      scanTimestamp: scanTimestamp
+    };
     
+    // Discord Log senden (asynchron, nicht blockierend)
+    sendToDiscordLog(scanData, clientInfo).catch(err => console.error('Discord log error:', err));
+
     return res.status(200).json({
       success: true,
       url: targetUrl,
@@ -485,24 +575,21 @@ export default async function handler(req, res) {
       patterns: basicPatterns.slice(0, 30).map(p => ({
         pattern: p.description,
         severity: p.severity,
+        location: 'HTML content',
         category: p.category
       })),
       webhooks: webhooks.map(w => ({ url: w, type: 'Discord Webhook' })),
-      loginForms: formAnalysis.hasLoginForm ? formAnalysis.total : 0,
+      loginForms: loginForms,
       sizeKB: sizeKB,
       groqReport: aiResult.report,
       sourcePreview: sourcePreview,
       shortReason: aiResult.shortReason,
       userWarning: aiResult.userWarning,
-      popupInjected: true
+      scanTimestamp: scanTimestamp
     });
 
   } catch (error) {
     console.error(`[AntiSec] Error:`, error.message);
-    
-    await sendScanLog(
-      targetUrl, urlObj.hostname, 50, 'ERROR', clientInfo, 0, 0, false
-    );
     
     return res.status(200).json({
       success: false,
@@ -510,13 +597,15 @@ export default async function handler(req, res) {
       url: targetUrl,
       domain: urlObj.hostname,
       riskScore: 50,
-      verdict: 'ERROR',
+      verdict: 'SCAN_ERROR',
+      isLegitimate: false,
       patterns: [],
       webhooks: [],
       loginForms: 0,
-      groqReport: `⚠️ Scan failed: ${error.message}`,
-      sourcePreview: getPopupHTML() + '\n\n<!-- Scan failed, but popup injected -->\n\nError: ' + error.message,
-      popupInjected: true
+      sizeKB: 0,
+      groqReport: `⚠️ **Scan Failed**\n\nError: ${error.message}`,
+      sourcePreview: '',
+      scanTimestamp: scanTimestamp
     });
   }
-          }
+      }
