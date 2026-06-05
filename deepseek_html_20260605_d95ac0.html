@@ -1,0 +1,1929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AntiSec — Phishing Intelligence Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;600;700&family=Share+Tech+Mono&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --black:    #000000;
+  --white:    #ffffff;
+  --red:      #e8000f;
+  --red-dim:  #6b0007;
+  --red-glow: rgba(232,0,15,0.18);
+  --line-r:   rgba(232,0,15,0.55);
+  --line-w:   rgba(255,255,255,0.1);
+  --text:     #d0d0d0;
+  --muted:    #3a3a3a;
+  --surface:  #080808;
+  --disc:     #c8c8c8;
+  --green:    #00cc44;
+  --green-dim:#004422;
+  --yellow:   #ffcc00;
+
+  --wrap-pad-x: clamp(16px,4vw,48px);
+  --wrap-pad-y: clamp(56px,9vh,90px);
+  --touch-min:  44px;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--black);
+  color: var(--text);
+  font-family: 'Barlow', sans-serif;
+  font-weight: 300;
+  min-height: 100vh;
+  overflow-x: hidden;
+  cursor: crosshair;
+}
+
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 3px,
+    rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.vline {
+  position: fixed; top: 0; bottom: 0;
+  width: 1px; pointer-events: none; z-index: 0;
+}
+.vline-l1 { left: clamp(16px,4vw,48px);  background: var(--line-w); }
+.vline-l2 { left: clamp(28px,6vw,80px);  background: var(--line-r); opacity: 0.4; }
+.vline-r1 { right: clamp(16px,4vw,48px); background: var(--line-w); }
+.vline-r2 { right: clamp(28px,6vw,80px); background: var(--line-r); opacity: 0.4; }
+
+.hline {
+  position: fixed; left: 0; right: 0;
+  height: 1px; pointer-events: none; z-index: 0;
+}
+.hline-t { top: clamp(40px,8vh,64px);    background: linear-gradient(90deg, transparent, var(--line-r) 20%, var(--line-w) 80%, transparent); }
+.hline-b { bottom: clamp(28px,4vh,40px); background: linear-gradient(90deg, transparent, var(--line-w) 20%, var(--line-r) 80%, transparent); }
+
+.corner {
+  position: fixed;
+  width: clamp(12px,3vw,20px); height: clamp(12px,3vh,20px);
+  pointer-events: none; z-index: 10;
+}
+.corner::before, .corner::after { content: ''; position: absolute; background: var(--red); }
+.corner::before { width: 100%; height: 1px; }
+.corner::after  { width: 1px; height: 100%; }
+.corner-tl { top: clamp(10px,2vw,20px); left: clamp(10px,2vw,20px); }
+.corner-tl::before { top:0; left:0; } .corner-tl::after { top:0; left:0; }
+.corner-tr { top: clamp(10px,2vw,20px); right: clamp(10px,2vw,20px); transform: scaleX(-1); }
+.corner-tr::before { top:0; left:0; } .corner-tr::after { top:0; left:0; }
+.corner-bl { bottom: clamp(10px,2vw,20px); left: clamp(10px,2vw,20px); transform: scaleY(-1); }
+.corner-bl::before { top:0; left:0; } .corner-bl::after { top:0; left:0; }
+.corner-br { bottom: clamp(10px,2vw,20px); right: clamp(10px,2vw,20px); transform: scale(-1); }
+.corner-br::before { top:0; left:0; } .corner-br::after { top:0; left:0; }
+
+.wrap {
+  position: relative; z-index: 1;
+  max-width: 1200px; margin: 0 auto;
+  padding: var(--wrap-pad-y) var(--wrap-pad-x);
+  padding-bottom: calc(var(--wrap-pad-y) + 52px);
+}
+
+.logo-block {
+  margin-bottom: clamp(36px,7vh,64px);
+  animation: fadeIn 1s ease both;
+}
+.logo-eyebrow {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.52rem,1.5vw,0.6rem);
+  letter-spacing: 0.4em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 16px;
+  display: flex; align-items: center; gap: 14px;
+}
+.logo-eyebrow::before {
+  content: '';
+  display: block; width: 32px; height: 1px;
+  background: var(--red); flex-shrink: 0;
+}
+.logo {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 700;
+  font-size: clamp(3rem,12vw,6.5rem);
+  line-height: 0.9;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  display: inline-block;
+}
+.logo .anti { color: var(--white); }
+.logo .sec  { color: var(--red); }
+.logo-underline {
+  display: block; height: 1px;
+  background: linear-gradient(90deg, var(--red) 0%, var(--white) 40%, transparent 100%);
+  margin-top: 8px;
+}
+.logo-sub {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.58rem,1.8vw,0.68rem);
+  color: var(--muted);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  margin-top: 12px;
+  line-height: 1.8;
+}
+.logo-sub .slash { color: var(--red); margin: 0 6px; }
+
+.divider {
+  display: flex; align-items: center;
+  margin-bottom: 32px;
+  animation: fadeIn 1s ease 0.2s both;
+}
+.divider::before { content:''; flex:1; height:1px; background: var(--line-r); }
+.divider::after  { content:''; flex:1; height:1px; background: var(--line-w); }
+.divider-label {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.55rem,1.5vw,0.6rem);
+  letter-spacing: 0.3em;
+  color: var(--red-dim);
+  padding: 0 16px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.input-section { animation: fadeIn 1s ease 0.3s both; }
+
+.field-label {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.56rem,1.5vw,0.62rem);
+  letter-spacing: 0.3em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 10px;
+}
+.field-label::before {
+  content: '';
+  width: 6px; height: 6px;
+  border: 1px solid var(--red);
+  display: block;
+  transform: rotate(45deg);
+  flex-shrink: 0;
+}
+
+.input-row {
+  display: flex;
+  border: 1px solid #1a1a1a;
+  position: relative;
+  transition: border-color 0.3s;
+  min-height: var(--touch-min);
+}
+.input-row::before {
+  content: '';
+  position: absolute; top: -1px; left: 0;
+  width: 40%; height: 1px;
+  background: var(--red);
+  transition: width 0.4s ease;
+}
+.input-row:focus-within { border-color: #2a2a2a; }
+.input-row:focus-within::before { width: 100%; background: linear-gradient(90deg, var(--red), var(--white)); }
+
+.input-prefix {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--red);
+  padding: 0 14px;
+  display: flex; align-items: center;
+  border-right: 1px solid #1a1a1a;
+  background: #030303;
+  user-select: none;
+  flex-shrink: 0;
+  white-space: nowrap;
+  letter-spacing: 0.05em;
+}
+
+input[type="text"] {
+  flex: 1; min-width: 0;
+  background: transparent;
+  border: none; outline: none;
+  padding: 14px 16px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.85rem,2.5vw,1rem);
+  color: var(--white);
+  caret-color: var(--red);
+  letter-spacing: 0.05em;
+}
+input::placeholder { color: #2a2a2a; }
+
+.btn-execute {
+  background: var(--black);
+  color: var(--white);
+  border: none;
+  border-left: 1px solid #1a1a1a;
+  padding: 0 clamp(16px,4vw,36px);
+  font-family: 'Oswald', sans-serif;
+  font-size: clamp(0.75rem,2vw,0.85rem);
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  cursor: crosshair;
+  position: relative; overflow: hidden;
+  flex-shrink: 0;
+  white-space: nowrap;
+  min-height: var(--touch-min);
+  transition: color 0.2s;
+}
+.btn-execute::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: var(--red);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+.btn-execute:hover::before { transform: scaleX(1); }
+.btn-execute:hover { color: var(--white); }
+.btn-execute span { position: relative; z-index: 1; }
+.btn-execute:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-execute:disabled::before { display: none; }
+
+.hint {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.56rem,1.5vw,0.62rem);
+  color: #222;
+  margin-top: 8px;
+  letter-spacing: 0.12em;
+}
+
+.progress-block { display: none; margin-top: 40px; animation: fadeIn 0.4s ease both; }
+.progress-block.show { display: block; }
+.progress-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 6px; gap: 12px;
+}
+.progress-status {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.65rem,2vw,0.72rem);
+  color: var(--white);
+  letter-spacing: 0.08em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.progress-status::before { content: '▶ '; color: var(--red); }
+.progress-pct {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.68rem; color: var(--muted); flex-shrink: 0;
+}
+.progress-bar { height: 3px; background: #111; position: relative; border-radius: 3px; }
+.progress-fill {
+  height: 3px;
+  width: 0%;
+  transition: width 0.3s ease;
+  position: relative;
+  border-radius: 3px;
+}
+.progress-fill.low { background: var(--green); }
+.progress-fill.medium { background: var(--yellow); }
+.progress-fill.high { background: var(--red); }
+.progress-fill::after {
+  content: '';
+  position: absolute; right: -3px; top: -3px;
+  width: 9px; height: 9px;
+  background: inherit;
+  border-radius: 50%;
+  box-shadow: 0 0 8px currentColor;
+}
+.progress-sub { height: 1px; background: #0d0d0d; margin-top: 6px; }
+.progress-sub-fill { height: 1px; background: #2a2a2a; width: 0%; transition: width 0.5s ease; }
+.log-block {
+  margin-top: 20px;
+  background: #030303;
+  border: 1px solid #111;
+  border-left: 1px solid var(--red-dim);
+  padding: 14px 16px;
+  max-height: clamp(80px,20vh,120px);
+  overflow-y: auto;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.6rem,1.5vw,0.68rem);
+  line-height: 1.8;
+}
+.log-line     { color: #2e2e2e; }
+.log-line.ok  { color: #3a3a3a; }
+.log-line.hit { color: var(--green); }
+.log-line.err { color: var(--red-dim); }
+
+.error-block {
+  display: none; margin-top: 32px;
+  padding: 16px 20px;
+  border: 1px solid var(--red-dim);
+  border-left: 2px solid var(--red);
+  background: #030303;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.7rem,2vw,0.78rem);
+  color: var(--red);
+  animation: fadeIn 0.4s ease both;
+}
+.error-block.show { display: block; }
+.error-block strong {
+  display: block;
+  font-size: clamp(0.55rem,1.5vw,0.6rem);
+  letter-spacing: 0.2em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.results-block { display: none; margin-top: 56px; animation: fadeIn 0.6s ease both; }
+.results-block.show { display: block; }
+
+.site-strip {
+  display: flex; align-items: center;
+  gap: 16px; margin-bottom: 32px;
+  flex-wrap: wrap; row-gap: 12px;
+  position: relative; padding-bottom: 24px;
+}
+.site-strip::after {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--red) 0%, #1a1a1a 60%, transparent);
+}
+.site-favicon {
+  width: 28px; height: 28px;
+  background: #080808;
+  border: 1px solid #1a1a1a;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Oswald', sans-serif;
+  font-size: 0.75rem; font-weight: 600;
+  color: var(--red); flex-shrink: 0;
+}
+.site-url-info { flex: 1; min-width: 0; }
+.site-domain {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 600;
+  font-size: clamp(1rem,3vw,1.3rem);
+  color: var(--white);
+  letter-spacing: 0.05em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.site-domain .proto { color: var(--red); }
+.site-full-url {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.58rem; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 3px; letter-spacing: 0.05em;
+}
+.status-badge {
+  flex-shrink: 0;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.58rem; letter-spacing: 0.12em;
+  padding: 4px 10px;
+  border: 1px solid #1a1a1a; color: #2a2a2a;
+}
+.status-badge.safe { border-color: var(--green-dim); color: var(--green); }
+.status-badge.suspicious { border-color: var(--yellow); color: var(--yellow); }
+.status-badge.phishing { border-color: var(--red-dim); color: var(--red); }
+
+.risk-meter {
+  background: #030303;
+  border: 1px solid #111;
+  padding: 20px 24px;
+  margin-bottom: 32px;
+  position: relative;
+  overflow: hidden;
+}
+.risk-label {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.3em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.risk-value {
+  font-family: 'Oswald', sans-serif;
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+  transition: color 0.3s ease;
+}
+.risk-value.safe { color: var(--green); }
+.risk-value.suspicious { color: var(--yellow); }
+.risk-value.phishing { color: var(--red); }
+.risk-bar {
+  margin-top: 16px;
+  height: 4px;
+  background: #1a1a1a;
+  position: relative;
+  border-radius: 4px;
+}
+.risk-fill {
+  height: 100%;
+  width: 0%;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 4px;
+}
+.risk-fill.safe { background: var(--green); }
+.risk-fill.suspicious { background: var(--yellow); }
+.risk-fill.phishing { background: var(--red); }
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: #0a0a0a;
+  border: 1px solid #111;
+  margin-bottom: 32px;
+}
+.stat-card {
+  padding: clamp(14px,3vw,18px) 12px;
+  background: #030303;
+  text-align: center;
+  transition: background 0.2s;
+}
+.stat-card:hover { background: #060606; }
+.stat-num {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 600;
+  font-size: clamp(1.3rem,4vw,1.9rem);
+  line-height: 1;
+  color: var(--white);
+}
+.stat-num.accent { color: var(--red); }
+.stat-lbl {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-top: 5px;
+}
+
+.tabs {
+  display: flex; gap: 1px;
+  background: #0a0a0a;
+  border: 1px solid #111; border-bottom: none;
+  flex-wrap: wrap;
+}
+.tab-btn {
+  flex: 1; padding: 11px 8px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.52rem,1.5vw,0.6rem);
+  letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--muted);
+  background: #030303;
+  border: none; border-right: 1px solid #0a0a0a;
+  cursor: crosshair;
+  transition: all 0.2s;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tab-btn:last-child { border-right: none; }
+.tab-btn.active {
+  color: var(--red); background: #000;
+  border-bottom: 1px solid var(--red); margin-bottom: -1px;
+}
+.tab-btn:hover:not(.active) { color: var(--white); background: #050505; }
+
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+.list-panel {
+  border: 1px solid #111;
+  border-top: 1px solid var(--red-dim);
+  max-height: clamp(280px,52vh,580px);
+  overflow-y: auto;
+  background: #000;
+}
+.list-item {
+  display: flex; align-items: flex-start;
+  gap: 12px; padding: clamp(10px,2vw,13px) 16px;
+  border-bottom: 1px solid #080808;
+  transition: background 0.15s;
+  animation: rowSlide 0.3s ease both;
+}
+.list-item:last-child { border-bottom: none; }
+.list-item:hover { background: #060606; }
+.item-idx {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.58rem; color: #181818;
+  flex-shrink: 0; min-width: 28px;
+  text-align: right; padding-top: 1px;
+}
+.item-body { flex: 1; min-width: 0; }
+.item-main {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.7rem,2vw,0.78rem);
+  color: var(--white); word-break: break-all;
+}
+.item-main.warning { color: var(--yellow); }
+.item-main.danger { color: var(--red); }
+.item-sub {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.58rem; color: #2a2a2a;
+  margin-top: 3px; word-break: break-all;
+  letter-spacing: 0.05em;
+}
+.item-tag {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.5rem; letter-spacing: 0.1em;
+  padding: 2px 7px;
+  border: 1px solid #1a1a1a; color: #222;
+  flex-shrink: 0;
+  white-space: nowrap; align-self: flex-start; margin-top: 2px;
+}
+.item-tag.webhook { border-color: var(--red-dim); color: var(--red); }
+.item-tag.pattern { border-color: var(--yellow); color: var(--yellow); }
+
+.actions {
+  display: grid; grid-template-columns: repeat(4,1fr);
+  gap: 1px; margin-top: 20px;
+}
+.btn {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.58rem,1.6vw,0.65rem);
+  letter-spacing: 0.12em;
+  padding: clamp(12px,2.5vw,14px) clamp(10px,2vw,20px);
+  border: 1px solid #111;
+  background: #030303; color: var(--muted);
+  cursor: crosshair; text-transform: uppercase;
+  transition: all 0.2s; text-align: center;
+  min-height: var(--touch-min);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.btn:hover { border-color: var(--white); color: var(--white); }
+.btn.red  { border-color: var(--red-dim); color: var(--red); }
+.btn.red:hover { background: var(--red); color: var(--black); }
+
+.report-content {
+  padding: 20px;
+  background: #030303;
+  border: 1px solid #111;
+  font-family: 'Barlow', sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.8;
+  color: #b0b0b0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.invite-footer {
+  display: none;
+  margin-top: 48px;
+  padding: 24px;
+  background: #030303;
+  border: 1px solid #141414;
+  border-left: 2px solid var(--disc);
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+}
+.invite-footer.show { display: block; animation: fadeIn 0.6s ease both; }
+.invite-footer::before {
+  content: '';
+  position: absolute; top: 0; left: 0;
+  width: 50%; height: 1px;
+  background: linear-gradient(90deg, var(--disc), transparent);
+}
+.invite-glyph {
+  width: 48px; height: 48px;
+  margin: 0 auto 16px;
+  background: rgba(88,101,242,0.08);
+  border: 1px solid rgba(88,101,242,0.25);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1.3rem;
+  color: var(--disc);
+  border-radius: 50%;
+}
+.invite-footer h3 {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 600;
+  font-size: 1.2rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--white);
+  margin-bottom: 8px;
+}
+.invite-footer p {
+  font-family: 'Barlow', sans-serif;
+  font-size: 0.8rem;
+  color: #5a5a5a;
+  margin-bottom: 20px;
+}
+.btn-invite {
+  background: rgba(88,101,242,0.08);
+  color: #7289da;
+  border: 1px solid rgba(88,101,242,0.3);
+  padding: 12px 28px;
+  font-family: 'Oswald', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: crosshair;
+  text-decoration: none;
+  display: inline-block;
+  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+.btn-invite::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: var(--disc);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+.btn-invite:hover::before { transform: scaleX(1); }
+.btn-invite:hover { color: var(--white); }
+.btn-invite span { position: relative; z-index: 1; }
+
+footer.footer {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  height: clamp(28px,4vh,40px);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 clamp(60px,10vw,120px);
+  z-index: 5;
+}
+.f-left, .f-right {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(0.48rem,1.4vw,0.55rem);
+  letter-spacing: 0.2em; color: #181818;
+  text-transform: uppercase; white-space: nowrap;
+}
+.f-right span { color: var(--red-dim); }
+
+/* POPUP STYLES */
+.popup-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.95);
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+  animation: fadeIn 0.3s ease;
+}
+.popup-overlay.show {
+  display: flex;
+}
+.popup-box {
+  max-width: 500px;
+  width: 90%;
+  background: #030303;
+  border: 1px solid var(--disc);
+  border-top: 3px solid var(--disc);
+  padding: 32px 28px;
+  text-align: center;
+  position: relative;
+  animation: slideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 40px rgba(88, 101, 242, 0.2);
+}
+.popup-close {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  background: transparent;
+  border: 1px solid #1a1a1a;
+  color: var(--muted);
+  width: 32px;
+  height: 32px;
+  cursor: crosshair;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.popup-close:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.popup-icon {
+  font-size: 3rem;
+  margin-bottom: 16px;
+}
+.popup-box h2 {
+  font-family: 'Oswald', sans-serif;
+  font-size: 1.6rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--white);
+  margin-bottom: 12px;
+}
+.popup-box h2 span {
+  color: var(--disc);
+}
+.popup-box p {
+  font-family: 'Barlow', sans-serif;
+  font-size: 0.9rem;
+  color: #888;
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+.popup-features {
+  margin: 24px 0;
+  text-align: left;
+  background: #0a0a0a;
+  padding: 16px 20px;
+  border-left: 2px solid var(--disc);
+}
+.popup-features div {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  color: #aaa;
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.popup-features div::before {
+  content: '⊹';
+  color: var(--disc);
+  font-size: 1rem;
+}
+.popup-btn {
+  display: inline-block;
+  background: rgba(88, 101, 242, 0.12);
+  color: #7289da;
+  border: 1px solid rgba(88, 101, 242, 0.4);
+  padding: 14px 32px;
+  font-family: 'Oswald', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-decoration: none;
+  margin-top: 16px;
+  transition: all 0.2s;
+  display: inline-block;
+  position: relative;
+  overflow: hidden;
+}
+.popup-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--disc);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+.popup-btn:hover::before {
+  transform: scaleX(1);
+}
+.popup-btn:hover {
+  color: var(--black);
+}
+.popup-btn span {
+  position: relative;
+  z-index: 1;
+}
+.popup-later {
+  margin-top: 20px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.6rem;
+  color: #333;
+  background: none;
+  border: none;
+  cursor: crosshair;
+  letter-spacing: 0.1em;
+}
+.popup-later:hover {
+  color: #555;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes rowSlide {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+::-webkit-scrollbar       { width: 2px; height: 2px; }
+::-webkit-scrollbar-track { background: #000; }
+::-webkit-scrollbar-thumb { background: var(--red-dim); }
+
+.hamburger-btn {
+  position: fixed;
+  top: clamp(8px,2vh,16px);
+  right: clamp(40px,7vw,90px);
+  z-index: 200;
+  width: 40px; height: 40px;
+  background: transparent;
+  border: 1px solid #1a1a1a;
+  cursor: crosshair;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 5px;
+  padding: 0;
+  transition: border-color 0.2s;
+}
+.hamburger-btn:hover { border-color: var(--red); }
+.hamburger-btn span {
+  display: block;
+  width: 18px; height: 1px;
+  background: var(--text);
+  transition: all 0.25s ease;
+  transform-origin: center;
+}
+.hamburger-btn.open span:nth-child(1) { transform: translateY(6px) rotate(45deg); background: var(--red); }
+.hamburger-btn.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+.hamburger-btn.open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); background: var(--red); }
+
+.nav-overlay {
+  position: fixed; inset: 0;
+  z-index: 150;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.nav-overlay.open {
+  pointer-events: auto;
+  opacity: 1;
+}
+.nav-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.7);
+}
+.nav-panel {
+  position: absolute;
+  top: 0; right: 0;
+  width: clamp(220px, 60vw, 300px);
+  height: 100%;
+  background: #020202;
+  border-left: 2px solid var(--red-dim);
+  display: flex; flex-direction: column;
+  padding: clamp(60px,10vh,90px) 0 40px;
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+  z-index: 1;
+}
+.nav-overlay.open .nav-panel { transform: translateX(0); }
+
+.nav-label {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.35em;
+  color: var(--red-dim);
+  text-transform: uppercase;
+  padding: 0 28px 20px;
+  border-bottom: 1px solid #111;
+  margin-bottom: 8px;
+}
+.nav-link, button.nav-link {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 28px;
+  font-family: 'Oswald', sans-serif;
+  font-weight: 400;
+  font-size: clamp(0.85rem,2.5vw,1rem);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  border: none;
+  border-bottom: 1px solid #0d0d0d;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  transition: all 0.2s;
+  cursor: crosshair;
+  position: relative; overflow: hidden;
+}
+.nav-link::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px; background: var(--red);
+  transform: scaleY(0);
+  transition: transform 0.2s ease;
+}
+.nav-link:hover { color: var(--white); background: #060606; }
+.nav-link:hover::before { transform: scaleY(1); }
+.nav-link .nav-glyph {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.65rem; color: var(--red-dim);
+  flex-shrink: 0; width: 16px;
+  transition: color 0.2s;
+}
+.nav-link:hover .nav-glyph { color: var(--red); }
+.nav-footer-txt {
+  margin-top: auto;
+  padding: 20px 28px 0;
+  border-top: 1px solid #0d0d0d;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.52rem;
+  color: #1e1e1e;
+  letter-spacing: 0.1em;
+}
+.nav-footer-txt a { color: var(--red-dim); text-decoration: none; }
+.nav-footer-txt a:hover { color: var(--red); }
+
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.85);
+  padding: clamp(12px,4vw,40px);
+}
+.modal-overlay.open { display: flex; animation: fadeIn 0.2s ease; }
+.modal-box {
+  background: #030303;
+  border: 1px solid #1a1a1a;
+  border-top: 2px solid var(--red);
+  width: 100%; max-width: 640px;
+  max-height: 85vh;
+  display: flex; flex-direction: column;
+  position: relative;
+  animation: slideUp 0.25s ease;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid #111;
+  flex-shrink: 0;
+}
+.modal-title {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 600; font-size: 1rem;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--white);
+}
+.modal-title span { color: var(--red); }
+.modal-close {
+  background: transparent; border: 1px solid #1a1a1a;
+  color: var(--muted); width: 32px; height: 32px;
+  cursor: crosshair; font-size: 1rem;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s; flex-shrink: 0;
+}
+.modal-close:hover { border-color: var(--red); color: var(--red); }
+.modal-body {
+  overflow-y: auto; padding: 24px;
+  flex: 1;
+}
+
+.faq-item { margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid #0d0d0d; }
+.faq-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.faq-q {
+  font-family: 'Oswald', sans-serif; font-weight: 400;
+  font-size: 0.88rem; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--white);
+  margin-bottom: 8px; display: flex; align-items: baseline; gap: 10px;
+}
+.faq-q::before {
+  content: 'Q'; font-family: 'Share Tech Mono', monospace;
+  font-size: 0.58rem; color: var(--red);
+  border: 1px solid var(--red-dim); padding: 1px 5px;
+  flex-shrink: 0;
+}
+.faq-a {
+  font-family: 'Barlow', sans-serif; font-weight: 300;
+  font-size: 0.82rem; color: #5a5a5a; line-height: 1.7;
+  padding-left: 26px;
+}
+
+.step-list { display: flex; flex-direction: column; gap: 20px; }
+.step {
+  display: flex; gap: 16px; align-items: flex-start;
+}
+.step-num {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.58rem; color: var(--red);
+  border: 1px solid var(--red-dim);
+  width: 28px; height: 28px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  letter-spacing: 0;
+}
+.step-body { flex: 1; }
+.step-title {
+  font-family: 'Oswald', sans-serif; font-weight: 400;
+  font-size: 0.85rem; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--white);
+  margin-bottom: 5px;
+}
+.step-desc {
+  font-family: 'Barlow', sans-serif; font-weight: 300;
+  font-size: 0.8rem; color: #4a4a4a; line-height: 1.6;
+}
+.step-desc code {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.72rem; color: var(--red-dim);
+  background: #0a0a0a; padding: 1px 6px;
+  border: 1px solid #111;
+}
+
+.contact-section { margin-bottom: 28px; padding-bottom: 28px; border-bottom: 1px solid #0d0d0d; }
+.contact-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.contact-section-title {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.6rem; letter-spacing: 0.3em;
+  text-transform: uppercase; color: var(--red-dim);
+  margin-bottom: 16px;
+}
+.contact-tag {
+  display: inline-block;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.72rem; color: var(--white);
+  background: #0a0a0a; border: 1px solid #222;
+  padding: 4px 12px; margin-bottom: 14px;
+  letter-spacing: 0.08em;
+}
+.contact-tag span { color: var(--red); }
+.contact-note {
+  font-family: 'Barlow', sans-serif; font-weight: 300;
+  font-size: 0.8rem; color: #4a4a4a; line-height: 1.7;
+}
+.contact-note strong { color: var(--muted); font-weight: 400; }
+.contact-note a { color: var(--red-dim); text-decoration: none; }
+.contact-note a:hover { color: var(--red); text-decoration: underline; }
+.contact-steps { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.contact-step {
+  display: flex; gap: 12px; align-items: flex-start;
+  font-family: 'Barlow', sans-serif; font-weight: 300;
+  font-size: 0.8rem; color: #4a4a4a; line-height: 1.5;
+}
+.contact-step::before {
+  content: attr(data-n);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.55rem; color: var(--red-dim);
+  flex-shrink: 0; padding-top: 2px;
+}
+.contact-step strong { color: var(--muted); font-weight: 400; }
+.modal-divider {
+  height: 1px; background: linear-gradient(90deg, var(--red-dim), transparent);
+  margin: 4px 0 20px;
+}
+
+@media (max-width: 768px) {
+  .vline-l2, .vline-r2 { display: none; }
+  .stats-grid { grid-template-columns: repeat(4,1fr); }
+  .actions { grid-template-columns: repeat(3,1fr); }
+}
+@media (max-width: 580px) {
+  .stats-grid { grid-template-columns: repeat(2,1fr); }
+  .vline-l1 { left: 12px; } .vline-r1 { right: 12px; }
+  footer.footer { padding: 0 32px; }
+  .f-left { display: none; }
+  .tab-btn { font-size: 0.48rem; padding: 10px 4px; letter-spacing: 0.08em; }
+}
+@media (max-width: 400px) {
+  .actions { grid-template-columns: repeat(2,1fr); }
+  .stats-grid { grid-template-columns: repeat(2,1fr); }
+  .input-prefix { display: none; }
+}
+</style>
+</head>
+<body>
+
+<button class="hamburger-btn" id="hamburgerBtn" aria-label="Menu" type="button">
+  <span></span><span></span><span></span>
+</button>
+
+<div class="nav-overlay" id="navOverlay">
+  <div class="nav-backdrop" id="navBackdrop"></div>
+  <nav class="nav-panel">
+    <div class="nav-label">// Navigation</div>
+    <a href="https://discord.gg/6hv9T4UCN7" class="nav-link" target="_blank" rel="noopener">
+      <span class="nav-glyph">↗</span> Our Server
+    </a>
+    <button class="nav-link" id="navFaq" type="button">
+      <span class="nav-glyph">⊹</span> FAQ
+    </button>
+    <button class="nav-link" id="navHowTo" type="button">
+      <span class="nav-glyph">⊟</span> How To Use
+    </button>
+    <button class="nav-link" id="navContact" type="button">
+      <span class="nav-glyph">⊕</span> Contact
+    </button>
+    <div class="nav-footer-txt">
+      Admin · <a href="https://discord.com/users/the_greencone" target="_blank" rel="noopener">the_greencone</a>
+    </div>
+  </nav>
+</div>
+
+<!-- POPUP für AntiSec Server -->
+<div class="popup-overlay" id="serverPopup">
+  <div class="popup-box">
+    <button class="popup-close" id="popupCloseBtn">✕</button>
+    <div class="popup-icon">
+  <img src="/logo.png" alt="AntiSec Logo" style="width: 70px; height: 70px; border-radius: 50%; border: 2px solid #000000; object-fit: cover; box-shadow: 0 0 20px rgba(0,0,0,0.5);">
+</div>
+    <h2>Join <span>AntiSec</span> Server</h2>
+    <p>Unlock exclusive tools, live threat intelligence, and early access to new features.</p>
+    <div class="popup-features">
+      <div>Exclusive OSINT & Phishing Tools</div>
+      <div>Live Threat Intelligence Feeds</div>
+      <div>Early Access to New Scanners</div>
+      <div>Active Cybersecurity Community</div>
+      <div>Direct Support from Developers</div>
+    </div>
+    <a href="https://discord.gg/6hv9T4UCN7" class="popup-btn" target="_blank" rel="noopener">
+      <span>↗ Join AntiSec Now</span>
+    </a>
+    <button class="popup-later" id="popupLaterBtn">Remind me later</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalFaq">
+  <div class="modal-box">
+    <div class="modal-head">
+      <div class="modal-title"><span>//</span> FAQ</div>
+      <button class="modal-close" data-close="modalFaq" type="button">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="faq-item">
+        <div class="faq-q">What does AntiSec Phishing Scanner do?</div>
+        <div class="faq-a">It scans any public website for phishing indicators — suspicious login forms, fake banking pages, Discord webhooks, and other patterns used by attackers.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">How accurate is the AI report?</div>
+        <div class="faq-a">The Groq AI analyzes the page content and provides a detailed risk assessment. It's highly effective but should not be the only factor in your decision.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">What happens to the URLs I scan?</div>
+        <div class="faq-a">Nothing. Everything runs through our secure API. No data is stored or logged.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalHowTo">
+  <div class="modal-box">
+    <div class="modal-head">
+      <div class="modal-title"><span>//</span> How To Use</div>
+      <button class="modal-close" data-close="modalHowTo" type="button">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="step-list">
+        <div class="step">
+          <div class="step-num">01</div>
+          <div class="step-body">
+            <div class="step-title">Enter a suspicious URL</div>
+            <div class="step-desc">Paste any URL into the input field — with or without <code>https://</code></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">02</div>
+          <div class="step-body">
+            <div class="step-title">Execute Scan</div>
+            <div class="step-desc">Click <strong>Execute</strong> or press <code>Enter</code>. The system fetches the page and analyzes it for phishing patterns.</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">03</div>
+          <div class="step-body">
+            <div class="step-title">Review Results</div>
+            <div class="step-desc">Check the risk score, AI report, detected patterns, and any Discord webhooks.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalContact">
+  <div class="modal-box">
+    <div class="modal-head">
+      <div class="modal-title"><span>//</span> Contact</div>
+      <button class="modal-close" data-close="modalContact" type="button">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="contact-section">
+        <div class="contact-section-title">// Step 1 — Join the AntiSec Server</div>
+        <div class="modal-divider"></div>
+        <div class="contact-steps">
+          <div class="contact-step" data-n="01">Open Discord — either the <strong>desktop app</strong> or <strong>discord.com</strong> in your browser.</div>
+          <div class="contact-step" data-n="02">Click the <strong>+</strong> button on the left sidebar (Add a Server).</div>
+          <div class="contact-step" data-n="03">Select <strong>"Join a Server"</strong> and paste the invite link below.</div>
+          <div class="contact-step" data-n="04">Click <strong>Join Server</strong>. You're in.</div>
+        </div>
+        <div style="margin-top:18px;">
+          <div class="contact-tag">discord.gg/<span>6hv9T4UCN7</span></div>
+          <div class="contact-note">The invite link is: <strong>discord.gg/6hv9T4UCN7</strong> — if it has expired, contact <strong>the_greencone</strong> directly.</div>
+        </div>
+      </div>
+      <div class="contact-section">
+        <div class="contact-section-title">// Step 2 — Contact the Server Admin</div>
+        <div class="modal-divider"></div>
+        <div class="contact-tag">Admin — <span>the_greencone</span></div>
+        <div class="contact-steps">
+          <div class="contact-step" data-n="01"><strong>Inside the server:</strong> Find the_greencone in the member list and send a Direct Message — or ping them in the relevant channel.</div>
+          <div class="contact-step" data-n="02"><strong>Via Discord search:</strong> Open Discord, press <strong>Ctrl+K</strong> (or <strong>⌘K</strong> on Mac), type <code>the_greencone</code> and open their profile, then hit <strong>Message</strong>.</div>
+          <div class="contact-step" data-n="03">State your question or issue clearly. Include any <strong>error messages</strong> from the tool if you're reporting a bug.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="vline vline-l1"></div>
+<div class="vline vline-l2"></div>
+<div class="vline vline-r1"></div>
+<div class="vline vline-r2"></div>
+<div class="hline hline-t"></div>
+<div class="hline hline-b"></div>
+<div class="corner corner-tl"></div>
+<div class="corner corner-tr"></div>
+<div class="corner corner-bl"></div>
+<div class="corner corner-br"></div>
+
+<footer class="footer">
+  <div class="f-left">AntiSec · Phishing Intelligence Scanner</div>
+  <div class="f-right">Threat Detection <span>v2.0</span></div>
+</footer>
+
+<div class="wrap">
+
+  <div class="logo-block">
+    <div class="logo-eyebrow">Phishing Intelligence & Threat Scanner</div>
+    <div class="logo"><span class="anti">Phish</span><span class="sec">Scan</span></div>
+    <div class="logo-underline"></div>
+    <div class="logo-sub">
+      Pattern Detection<span class="slash">/</span>Webhook Analysis<span class="slash">/</span>AI Report<span class="slash">/</span>Risk Scoring
+    </div>
+  </div>
+
+  <div class="divider"><div class="divider-label">Target URL</div></div>
+
+  <div class="input-section">
+    <div class="field-label">Scan Target</div>
+    <div class="input-row">
+      <div class="input-prefix">&gt;_ URL</div>
+      <input type="text" id="urlInput"
+             placeholder="https://suspicious-site.com/login"
+             autocomplete="off" spellcheck="false"
+             autocapitalize="none" maxlength="2048" />
+      <button class="btn-execute" id="executeBtn" type="button">
+        <span>Scan</span>
+      </button>
+    </div>
+    <div class="hint">// Scans for phishing patterns · Discord webhooks · AI-powered analysis via Groq</div>
+  </div>
+
+  <div class="progress-block" id="progressBlock">
+    <div class="progress-head">
+      <div class="progress-status" id="statusText">Initializing...</div>
+      <div class="progress-pct" id="pctText">0%</div>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-sub">
+      <div class="progress-sub-fill" id="subFill"></div>
+    </div>
+    <div class="log-block" id="logBlock" aria-live="polite"></div>
+  </div>
+
+  <div class="error-block" id="errorBlock" role="alert">
+    <strong>// Scan Failed</strong>
+    <span id="errorMsg"></span>
+  </div>
+
+  <div class="results-block" id="resultsBlock">
+
+    <div class="site-strip">
+      <div class="site-favicon" id="siteFavicon">?</div>
+      <div class="site-url-info">
+        <div class="site-domain" id="siteDomain">—</div>
+        <div class="site-full-url" id="siteFullUrl">—</div>
+      </div>
+      <div class="status-badge" id="statusBadge">—</div>
+    </div>
+
+    <div class="risk-meter" id="riskMeter">
+      <div class="risk-label">// RISK ASSESSMENT</div>
+      <div class="risk-value" id="riskValue">—</div>
+      <div class="risk-bar">
+        <div class="risk-fill" id="riskFill"></div>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-num accent" id="statPatterns">—</div>
+        <div class="stat-lbl">Patterns Found</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="statWebhooks">—</div>
+        <div class="stat-lbl">Webhooks</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="statForms">—</div>
+        <div class="stat-lbl">Login Forms</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="statSize">—</div>
+        <div class="stat-lbl">Size KB</div>
+      </div>
+    </div>
+
+    <div class="divider" style="margin-bottom:0">
+      <div class="divider-label">Analysis Results</div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="report">⊹ AI Report</button>
+      <button class="tab-btn" data-tab="patterns">⊕ Patterns</button>
+      <button class="tab-btn" data-tab="webhooks"># Webhooks</button>
+      <button class="tab-btn" data-tab="source">◷ Source Preview</button>
+    </div>
+
+    <div class="tab-pane active" id="tab-report">
+      <div class="report-content" id="reportContent">
+        // Scan a URL to generate AI analysis
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-patterns">
+      <div class="list-panel" id="patternsList"></div>
+    </div>
+
+    <div class="tab-pane" id="tab-webhooks">
+      <div class="list-panel" id="webhooksList"></div>
+    </div>
+
+    <div class="tab-pane" id="tab-source">
+      <div class="list-panel" id="sourcePreview"></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn red" id="btnCopyReport" type="button">⊕ Copy Report</button>
+      <button class="btn" id="btnNewScan" type="button">↺ New Scan</button>
+    </div>
+
+    <!-- INVITE FOOTER - erscheint NUR nach einem Scan -->
+    <div class="invite-footer" id="inviteFooter">
+      <div class="invite-glyph">#</div>
+      <h3>Join Our Server</h3>
+      <p>Get access to exclusive OSINT tools, live threat intelligence, and early updates.</p>
+      <a href="https://discord.gg/6hv9T4UCN7" class="btn-invite" target="_blank" rel="noopener noreferrer">
+        <span>↗ Join AntiSec</span>
+      </a>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  let currentResult = null;
+  let scanCompleted = false;
+
+  function $(id) { return document.getElementById(id); }
+  function show(id) { var el = $(id); if (el) el.classList.add('show'); }
+  function hide(id) { var el = $(id); if (el) el.classList.remove('show'); }
+  function text(id, v) { var el = $(id); if (el) el.textContent = String(v); }
+
+  // Echte 0-100 Prozent Animation
+  function animateProgress(targetPercent, duration, onUpdate, onComplete) {
+    const startPercent = 0;
+    const startTime = performance.now();
+    
+    function update(currentTime) {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const easeOutCubic = 1 - Math.pow(1 - progress, 3);
+      const currentPercent = startPercent + (targetPercent - startPercent) * easeOutCubic;
+      
+      if (onUpdate) onUpdate(Math.round(currentPercent));
+      
+      if (progress < 1) {
+        requestAnimationFrame(update);
+      } else {
+        if (onUpdate) onUpdate(targetPercent);
+        if (onComplete) onComplete();
+      }
+    }
+    
+    requestAnimationFrame(update);
+  }
+
+  // Farben basierend auf Prozentzahl
+  function getProgressColor(percent) {
+    if (percent < 30) return 'low';
+    if (percent < 70) return 'medium';
+    return 'high';
+  }
+  
+  function getRiskColorClass(score) {
+    if (score < 30) return 'safe';
+    if (score < 70) return 'suspicious';
+    return 'phishing';
+  }
+
+  function updateProgressFill(percent) {
+    const fill = $('progressFill');
+    if (fill) {
+      fill.style.width = percent + '%';
+      const colorClass = getProgressColor(percent);
+      fill.className = 'progress-fill ' + colorClass;
+    }
+    const pctEl = $('pctText');
+    if (pctEl) pctEl.textContent = percent + '%';
+  }
+
+  function setProgressWithAnimation(targetPercent, msg, stepDuration = 800) {
+    const statusEl = $('statusText');
+    if (statusEl && msg) statusEl.textContent = msg;
+    
+    return new Promise((resolve) => {
+      animateProgress(targetPercent, stepDuration, (current) => {
+        updateProgressFill(current);
+      }, () => {
+        resolve();
+      });
+    });
+  }
+
+  function setProgress(pct, msg) {
+    updateProgressFill(pct);
+    const statusEl = $('statusText');
+    if (statusEl && msg) statusEl.textContent = msg;
+  }
+
+  function log(msg, type) {
+    var block = $('logBlock');
+    if (!block) return;
+    var line = document.createElement('div');
+    line.className = 'log-line' + (type ? ' ' + type : '');
+    line.textContent = '> ' + String(msg).slice(0, 200);
+    block.appendChild(line);
+    block.scrollTop = block.scrollHeight;
+  }
+
+  function clearLog() { var b = $('logBlock'); if (b) b.textContent = ''; }
+
+  function showError(msg) {
+    text('errorMsg', String(msg).slice(0, 400));
+    show('errorBlock');
+    hide('progressBlock');
+    var btn = $('executeBtn');
+    if (btn) btn.disabled = false;
+  }
+
+  function normalizeURL(raw) {
+    raw = raw.trim();
+    if (!raw) return null;
+    if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
+    try { return new URL(raw); } catch (_) { return null; }
+  }
+
+  function animateRiskValue(element, startValue, endValue, duration) {
+    const startTime = performance.now();
+    
+    function update(currentTime) {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const easeOutCubic = 1 - Math.pow(1 - progress, 3);
+      const currentValue = Math.round(startValue + (endValue - startValue) * easeOutCubic);
+      
+      element.textContent = currentValue + '/100';
+      
+      if (progress < 1) {
+        requestAnimationFrame(update);
+      }
+    }
+    
+    requestAnimationFrame(update);
+  }
+
+  function animateRiskFill(fillElement, targetWidth, duration) {
+    const startWidth = 0;
+    const startTime = performance.now();
+    
+    function update(currentTime) {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const easeOutCubic = 1 - Math.pow(1 - progress, 3);
+      const currentWidth = startWidth + (targetWidth - startWidth) * easeOutCubic;
+      
+      fillElement.style.width = currentWidth + '%';
+      
+      if (progress < 1) {
+        requestAnimationFrame(update);
+      }
+    }
+    
+    requestAnimationFrame(update);
+  }
+
+  function showServerPopup() {
+    // Prüfen ob Popup in dieser Session schon gezeigt wurde
+    const popupShown = sessionStorage.getItem('antisec_popup_shown');
+    if (!popupShown && scanCompleted) {
+      setTimeout(() => {
+        const popup = $('serverPopup');
+        if (popup) popup.classList.add('show');
+      }, 1500);
+    }
+  }
+
+  function displayResults(data) {
+    currentResult = data;
+    scanCompleted = true;
+
+    var domainEl = $('siteDomain');
+    if (domainEl) {
+      domainEl.innerHTML = '';
+      var ps = document.createElement('span');
+      ps.className = 'proto';
+      ps.textContent = data.url.startsWith('https') ? 'https://' : 'http://';
+      domainEl.appendChild(ps);
+      domainEl.appendChild(document.createTextNode(data.domain));
+    }
+    text('siteFullUrl', data.url);
+    var fav = $('siteFavicon');
+    if (fav) fav.textContent = (data.domain.charAt(0) || '?').toUpperCase();
+
+    var badge = $('statusBadge');
+    if (badge) {
+      if (data.riskScore < 30) {
+        badge.textContent = 'LOW RISK';
+        badge.className = 'status-badge safe';
+      } else if (data.riskScore < 70) {
+        badge.textContent = 'MEDIUM RISK';
+        badge.className = 'status-badge suspicious';
+      } else {
+        badge.textContent = 'HIGH RISK - PHISHING';
+        badge.className = 'status-badge phishing';
+      }
+    }
+
+    // Animierte Risiko-Anzeige
+    var riskVal = $('riskValue');
+    var riskFill = $('riskFill');
+    if (riskVal) {
+      const colorClass = getRiskColorClass(data.riskScore);
+      riskVal.className = 'risk-value ' + colorClass;
+      animateRiskValue(riskVal, 0, data.riskScore, 800);
+    }
+    if (riskFill) {
+      const colorClass = getRiskColorClass(data.riskScore);
+      riskFill.className = 'risk-fill ' + colorClass;
+      animateRiskFill(riskFill, data.riskScore, 800);
+    }
+
+    // Statistik-Zahlen animieren
+    const statElements = ['statPatterns', 'statWebhooks', 'statForms', 'statSize'];
+    const statValues = [
+      data.patterns ? data.patterns.length : 0,
+      data.webhooks ? data.webhooks.length : 0,
+      data.loginForms || 0,
+      data.sizeKB || '—'
+    ];
+    
+    statElements.forEach((id, idx) => {
+      const el = $(id);
+      if (el && typeof statValues[idx] === 'number') {
+        const startVal = 0;
+        const endVal = statValues[idx];
+        animateProgress(endVal, 600, (current) => {
+          el.textContent = current;
+        });
+      } else if (el) {
+        el.textContent = statValues[idx];
+      }
+    });
+
+    var reportDiv = $('reportContent');
+    if (reportDiv && data.groqReport) {
+      reportDiv.innerHTML = data.groqReport.replace(/\n/g, '<br>');
+    } else if (reportDiv) {
+      reportDiv.innerHTML = '// AI analysis could not be generated.';
+    }
+
+    renderPatterns(data.patterns || []);
+    renderWebhooks(data.webhooks || []);
+    renderSourcePreview(data.sourcePreview || '');
+
+    var inviteFooter = $('inviteFooter');
+    if (inviteFooter) inviteFooter.classList.add('show');
+
+    show('resultsBlock');
+    
+    // Popup anzeigen
+    showServerPopup();
+  }
+
+  function renderPatterns(patterns) {
+    var container = $('patternsList');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!patterns.length) {
+      container.innerHTML = '<div class="empty-state">// No suspicious patterns detected</div>';
+      return;
+    }
+    patterns.forEach(function(p, i) {
+      var item = document.createElement('div');
+      item.className = 'list-item';
+      var idx = document.createElement('div');
+      idx.className = 'item-idx';
+      idx.textContent = String(i + 1).padStart(3, '0');
+      var body = document.createElement('div');
+      body.className = 'item-body';
+      var main = document.createElement('div');
+      main.className = 'item-main warning';
+      main.textContent = p.pattern;
+      var sub = document.createElement('div');
+      sub.className = 'item-sub';
+      sub.textContent = 'Found in: ' + (p.location || 'page content');
+      body.appendChild(main);
+      body.appendChild(sub);
+      var tag = document.createElement('div');
+      tag.className = 'item-tag pattern';
+      tag.textContent = p.severity === 'high' ? 'HIGH' : (p.severity === 'medium' ? 'MED' : 'LOW');
+      item.appendChild(idx);
+      item.appendChild(body);
+      item.appendChild(tag);
+      container.appendChild(item);
+    });
+  }
+
+  function renderWebhooks(webhooks) {
+    var container = $('webhooksList');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!webhooks.length) {
+      container.innerHTML = '<div class="empty-state">// No Discord webhooks detected</div>';
+      return;
+    }
+    webhooks.forEach(function(w, i) {
+      var item = document.createElement('div');
+      item.className = 'list-item';
+      var idx = document.createElement('div');
+      idx.className = 'item-idx';
+      idx.textContent = String(i + 1).padStart(3, '0');
+      var body = document.createElement('div');
+      body.className = 'item-body';
+      var main = document.createElement('div');
+      main.className = 'item-main danger';
+      main.textContent = w.url;
+      var sub = document.createElement('div');
+      sub.className = 'item-sub';
+      sub.textContent = '⚠️ This webhook could be used to steal user data';
+      body.appendChild(main);
+      body.appendChild(sub);
+      var tag = document.createElement('div');
+      tag.className = 'item-tag webhook';
+      tag.textContent = 'WEBHOOK';
+      item.appendChild(idx);
+      item.appendChild(body);
+      item.appendChild(tag);
+      container.appendChild(item);
+    });
+  }
+
+  function renderSourcePreview(preview) {
+    var container = $('sourcePreview');
+    if (!container) return;
+    container.innerHTML = '';
+    var pre = document.createElement('pre');
+    pre.style.cssText = 'margin:0;padding:16px;font-family:Share Tech Mono,monospace;font-size:0.68rem;color:#5a5a5a;white-space:pre-wrap;word-break:break-all;';
+    pre.textContent = preview || '// No source preview available';
+    container.appendChild(pre);
+  }
+
+  async function startScan() {
+    var inputEl = $('urlInput');
+    var raw = inputEl ? inputEl.value.trim() : '';
+    var parsed = normalizeURL(raw);
+    if (!parsed) {
+      showError('Invalid URL — try: example.com  or  https://example.com/login');
+      return;
+    }
+    var targetURL = parsed.href;
+
+    hide('errorBlock');
+    hide('resultsBlock');
+    clearLog();
+    currentResult = null;
+    scanCompleted = false;
+    var btn = $('executeBtn');
+    if (btn) btn.disabled = true;
+    show('progressBlock');
+    
+    // Reset progress bar
+    updateProgressFill(0);
+    
+    await setProgressWithAnimation(5, 'Resolving target...', 300);
+    log('Target: ' + targetURL, 'ok');
+
+    try {
+      await setProgressWithAnimation(15, 'Connecting to AntiSec scanner...', 400);
+      log('Connecting to AntiSec intelligence server...', 'ok');
+
+      await setProgressWithAnimation(30, 'Routing through secure API...', 500);
+      log('Initiating secure scan request...', 'ok');
+
+      var controller = new AbortController();
+      var tid = setTimeout(function() { controller.abort(); }, 30000);
+
+      await setProgressWithAnimation(45, 'Fetching page content...', 400);
+      log('Fetching target website content...', 'ok');
+
+      var response = await fetch('/api/scan?url=' + encodeURIComponent(targetURL), {
+        signal: controller.signal
+      });
+
+      clearTimeout(tid);
+
+      await setProgressWithAnimation(70, 'Analyzing HTML structure...', 500);
+      log('Processing DOM and extracting patterns...', 'hit');
+
+      var data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Scan failed');
+      }
+
+      await setProgressWithAnimation(85, 'Generating AI report...', 500);
+      log('AI analysis in progress...', 'hit');
+
+      await setProgressWithAnimation(95, 'Finalizing results...', 400);
+      log('Compiling intelligence report...', 'ok');
+
+      await setProgressWithAnimation(100, 'Complete!', 300);
+      log('Scan finished. Risk score: ' + data.riskScore + '/100', data.riskScore > 50 ? 'err' : 'hit');
+      
+      displayResults(data);
+
+    } catch (err) {
+      log('Scan failed: ' + err.message, 'err');
+      showError(err.message);
+    } finally {
+      hide('progressBlock');
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function copyReport() {
+    if (!currentResult) {
+      toast('No report to copy');
+      return;
+    }
+    var reportText = 'AntiSec Phishing Scan Report\n';
+    reportText += '========================\n\n';
+    reportText += 'URL: ' + currentResult.url + '\n';
+    reportText += 'Risk Score: ' + currentResult.riskScore + '/100\n\n';
+    reportText += 'AI Analysis:\n' + currentResult.groqReport + '\n\n';
+    reportText += 'Detected Patterns:\n';
+    (currentResult.patterns || []).forEach(function(p) {
+      reportText += '  - ' + p.pattern + ' (' + p.severity + ')\n';
+    });
+    reportText += '\nDiscord Webhooks Found: ' + (currentResult.webhooks || []).length + '\n';
+    if (currentResult.webhooks && currentResult.webhooks.length) {
+      currentResult.webhooks.forEach(function(w) {
+        reportText += '  - ' + w.url + '\n';
+      });
+    }
+    copyText(reportText, 'Report');
+  }
+
+  function copyText(str, label) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(str).then(function() { toast(label + ' copied to clipboard'); });
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = str;
+      ta.style.cssText = 'position:fixed;left:-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); toast(label + ' copied'); } catch (_) {}
+      document.body.removeChild(ta);
+    }
+  }
+
+  function toast(msg) {
+    var t = document.createElement('div');
+    t.textContent = String(msg).slice(0, 100);
+    Object.assign(t.style, {
+      position: 'fixed', bottom: '80px', left: '50%', transform: 'translateX(-50%)',
+      background: '#000', color: '#e8000f', padding: '8px 20px',
+      fontFamily: 'Share Tech Mono,monospace', fontSize: '11px',
+      border: '1px solid #e8000f', zIndex: '10000',
+      letterSpacing: '1px', pointerEvents: 'none',
+      maxWidth: '90vw', textAlign: 'center', whiteSpace: 'nowrap'
+    });
+    document.body.appendChild(t);
+    setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 2200);
+  }
+
+  function resetUI() {
+    hide('resultsBlock');
+    hide('errorBlock');
+    currentResult = null;
+    scanCompleted = false;
+    var inviteFooter = $('inviteFooter');
+    if (inviteFooter) inviteFooter.classList.remove('show');
+    var input = $('urlInput');
+    if (input) {
+      input.value = '';
+      input.focus();
+    }
+    var btn = $('executeBtn');
+    if (btn) btn.disabled = false;
+    updateProgressFill(0);
+  }
+
+  // Popup Funktionen
+  function closePopup() {
+    const popup = $('serverPopup');
+    if (popup) popup.classList.remove('show');
+  }
+  
+  function remindLater() {
+    closePopup();
+    // Popup in dieser Session nicht mehr anzeigen
+    sessionStorage.setItem('antisec_popup_shown', 'true');
+  }
+
+  var execBtn = $('executeBtn');
+  if (execBtn) execBtn.addEventListener('click', startScan);
+  var urlInput = $('urlInput');
+  if (urlInput) {
+    urlInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') startScan();
+    });
+  }
+
+  document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var id = this.dataset.tab;
+      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      document.querySelectorAll('.tab-pane').forEach(function(p) { p.classList.remove('active'); });
+      this.classList.add('active');
+      var pane = $('tab-' + id);
+      if (pane) pane.classList.add('active');
+    });
+  });
+
+  var btnCopy = $('btnCopyReport');
+  if (btnCopy) btnCopy.addEventListener('click', copyReport);
+  var btnNew = $('btnNewScan');
+  if (btnNew) btnNew.addEventListener('click', resetUI);
+
+  var hamburger = $('hamburgerBtn');
+  var navOverlayEl = $('navOverlay');
+  var backdrop = $('navBackdrop');
+  function openNav() { hamburger.classList.add('open'); navOverlayEl.classList.add('open'); document.body.style.overflow = 'hidden'; }
+  function closeNav() { hamburger.classList.remove('open'); navOverlayEl.classList.remove('open'); document.body.style.overflow = ''; }
+  if (hamburger) hamburger.addEventListener('click', function() { navOverlayEl.classList.contains('open') ? closeNav() : openNav(); });
+  if (backdrop) backdrop.addEventListener('click', closeNav);
+
+  function openModal(id) { var m = $(id); if (m) { m.classList.add('open'); document.body.style.overflow = 'hidden'; } }
+  function closeModal(id) { var m = $(id); if (m) { m.classList.remove('open'); document.body.style.overflow = ''; } }
+
+  var navFaq = $('navFaq');
+  var navHowTo = $('navHowTo');
+  var navContact = $('navContact');
+  if (navFaq) navFaq.addEventListener('click', function() { openModal('modalFaq'); });
+  if (navHowTo) navHowTo.addEventListener('click', function() { openModal('modalHowTo'); });
+  if (navContact) navContact.addEventListener('click', function() { openModal('modalContact'); });
+
+  document.querySelectorAll('[data-close]').forEach(function(btn) {
+    btn.addEventListener('click', function() { closeModal(btn.getAttribute('data-close')); });
+  });
+  document.querySelectorAll('.modal-overlay').forEach(function(ov) {
+    ov.addEventListener('click', function(e) { if (e.target === ov) closeModal(ov.id); });
+  });
+  
+  // Popup Event Listener
+  var popupCloseBtn = $('popupCloseBtn');
+  var popupLaterBtn = $('popupLaterBtn');
+  if (popupCloseBtn) popupCloseBtn.addEventListener('click', closePopup);
+  if (popupLaterBtn) popupLaterBtn.addEventListener('click', remindLater);
+  
+  // Popup schließen wenn Overlay geklickt wird
+  var popupOverlay = $('serverPopup');
+  if (popupOverlay) {
+    popupOverlay.addEventListener('click', function(e) {
+      if (e.target === popupOverlay) closePopup();
+    });
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      closeNav();
+      closePopup();
+      document.querySelectorAll('.modal-overlay.open').forEach(function(m) { m.classList.remove('open'); });
+      document.body.style.overflow = '';
+    }
+  });
+})();
+</script>
+</body>
+</html>
